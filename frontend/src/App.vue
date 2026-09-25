@@ -10,7 +10,7 @@ import QcPanel from './components/QcPanel.vue'
 import RecipePanel from './components/RecipePanel.vue'
 import SpectrumPlot from './components/SpectrumPlot.vue'
 import WorkspacePanel from './components/WorkspacePanel.vue'
-import { init, state, visibleIds } from './store'
+import { init, recipeRemovesContinuum, state, visibleIds } from './store'
 
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
@@ -51,23 +51,58 @@ onMounted(init)
     </v-navigation-drawer>
 
     <v-main class="d-flex flex-column" style="height: 100vh">
-      <div class="d-flex align-center px-3 py-1 border-b">
-        <v-btn-toggle v-model="state.mainView" mandatory density="compact" variant="tonal" color="primary" divided class="mr-4">
+      <div class="d-flex align-center ga-3 px-3 py-1 border-b flex-wrap">
+        <v-btn-toggle v-model="state.mainView" mandatory density="compact" variant="tonal" color="primary" divided>
           <v-btn value="spectra" size="small">Spectra</v-btn>
           <v-btn value="drillhole" size="small">Drill hole</v-btn>
         </v-btn-toggle>
-        <template v-if="state.mainView === 'spectra'">
-        <v-btn-toggle v-model="state.viewMode" mandatory density="compact" variant="outlined" divided :disabled="!hasProcessed">
+        <v-btn-toggle
+          v-if="state.mainView === 'spectra'"
+          v-model="state.viewMode"
+          mandatory
+          density="compact"
+          variant="outlined"
+          divided
+          :disabled="!hasProcessed"
+        >
           <v-btn value="input" size="small">Input</v-btn>
           <v-btn value="processed" size="small">Processed</v-btn>
           <v-btn value="both" size="small">Both</v-btn>
         </v-btn-toggle>
-        <span class="text-caption text-muted ml-3">
-          {{ hasProcessed ? 'Recipe applied to the shown spectra' : 'No active recipe step — showing input' }}
-        </span>
-        </template>
-        <span v-else class="text-caption text-muted">
-          The log shows the recipe output, the band parameters and QC of every sample of the hole.
+        <v-divider vertical class="my-1" />
+        <v-switch
+          v-model="state.continuum.on"
+          :disabled="recipeRemovesContinuum"
+          label="Continuum removed"
+          class="flex-grow-0"
+          :title="recipeRemovesContinuum ? 'The recipe already removes the continuum' : 'Divide by the upper convex hull, after the recipe'"
+        />
+        <v-text-field
+          v-model="state.continuum.start"
+          label="from" placeholder="auto"
+          suffix="nm"
+          density="compact"
+          style="max-width: 120px"
+          class="mono"
+          inputmode="decimal"
+          persistent-placeholder
+          :disabled="!state.continuum.on || recipeRemovesContinuum"
+          :error="!!state.continuumError"
+        />
+        <v-text-field
+          v-model="state.continuum.stop"
+          label="to" placeholder="auto"
+          suffix="nm"
+          density="compact"
+          style="max-width: 120px"
+          class="mono"
+          inputmode="decimal"
+          persistent-placeholder
+          :disabled="!state.continuum.on || recipeRemovesContinuum"
+          :error="!!state.continuumError"
+        />
+        <span class="text-caption" :class="state.continuumError ? 'text-error' : 'text-muted'">
+          {{ state.continuumError || (recipeRemovesContinuum ? 'continuum removed in the recipe' : '') }}
         </span>
       </div>
       <div class="flex-grow-1" style="min-height: 0">

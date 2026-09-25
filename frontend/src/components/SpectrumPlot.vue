@@ -184,7 +184,11 @@ async function render() {
   await Plotly.react(el.value, traces, layout, {
     responsive: true,
     displaylogo: false,
-    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    // Local data never leaves the machine: no Chart Studio / cloud buttons.
+    showSendToCloud: false,
+    showEditInChartStudio: false,
+    showLink: false,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d', 'sendDataToCloud', 'editInChartStudio'],
     toImageButtonOptions: { format: 'png', filename: 'swirl_spectra', scale: 2 },
   })
 }

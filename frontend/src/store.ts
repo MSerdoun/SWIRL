@@ -66,6 +66,9 @@ export const state = reactive({
   showBandMarkers: true,
   showBandWindows: true,
   mainView: 'spectra' as 'spectra' | 'drillhole',
+  // Quick continuum removal applied after the recipe (a real, recorded step).
+  continuum: { on: true, start: '', stop: '' },
+  continuumError: '',
   holes: [] as HoleInfo[],
   selectedHole: null as string | null,
   log: null as HoleLogData | null,
@@ -252,17 +255,47 @@ export function removeStep(index: number) {
   state.steps.splice(index, 1)
 }
 
+export const recipeRemovesContinuum = computed(() =>
+  state.steps.some((s) => s.enabled && s.op === 'continuum_removal'),
+)
+
+function parseBound(text: string, what: string): number | null {
+  const t = String(text ?? '').trim().replace(',', '.')
+  if (t === '') return null
+  const v = Number(t)
+  if (Number.isNaN(v)) throw new Error(`continuum ${what}: "${text}" is not a number`)
+  return v
+}
+
+/** The quick continuum-removal step, when switched on and not already in the recipe. */
+export function continuumStep(): StepPayload | null {
+  state.continuumError = ''
+  if (!state.continuum.on || recipeRemovesContinuum.value) return null
+  try {
+    const start = parseBound(state.continuum.start, 'from')
+    const stop = parseBound(state.continuum.stop, 'to')
+    return { op: 'continuum_removal', params: { start, stop } }
+  } catch (err) {
+    state.continuumError = (err as Error).message
+    return null
+  }
+}
+
 export function activeSteps(): StepPayload[] {
-  return state.steps.filter((s) => s.enabled).map((s) => ({ op: s.op, params: { ...s.params } }))
+  const steps = state.steps.filter((s) => s.enabled).map((s) => ({ op: s.op, params: { ...s.params } }))
+  const cr = continuumStep()
+  return cr ? [...steps, cr] : steps
 }
 
 export function recipeDocument() {
   return {
     name: state.recipeName,
     description: '',
-    steps: state.steps.filter((s) => s.enabled).map((s) => ({ op: s.op, ...s.params })),
+    steps: activeSteps().map((s) => ({ op: s.op, ...s.params })),
   }
 }
+
+const continuumKey = () => JSON.stringify(state.continuum) + String(recipeRemovesContinuum.value)
 
 export async function loadRecipe(file: File) {
   try {
@@ -286,8 +319,9 @@ async function runProcess() {
   const seq = ++processSeq
   const ids = visibleIds.value
   const enabled = state.steps.filter((s) => s.enabled)
+  const steps = activeSteps()
   for (const s of state.steps) s.serverErrors = {}
-  if (!ids.length || !enabled.length) {
+  if (!ids.length || !steps.length) {
     state.processed = {}
     state.processErrors = []
     return
@@ -298,7 +332,7 @@ async function runProcess() {
   }
   state.processing = true
   try {
-    const r = await api.process(ids, activeSteps())
+    const r = await api.process(ids, steps)
     if (seq !== processSeq) return
     state.processed = Object.fromEntries(r.results.map((x) => [x.id, x]))
     state.processErrors = r.errors.map((e) => {
@@ -311,7 +345,10 @@ async function runProcess() {
     if (err instanceof ApiError && err.status === 422 && isStepDetail(err.detail)) {
       for (const p of err.detail.steps) {
         const step = enabled[p.step]
-        if (!step) continue
+        if (!step) {
+          state.continuumError = p.errors.map((e) => e.msg).join('; ')
+          continue
+        }
         for (const e of p.errors) step.serverErrors[String(e.loc[0] ?? '_')] = e.msg
         step.open = true
       }
@@ -332,7 +369,11 @@ export function scheduleProcess() {
 }
 
 watch(
-  () => [visibleIds.value.join(','), JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors]))],
+  () => [
+    visibleIds.value.join(','),
+    JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
+    continuumKey(),
+  ],
   scheduleProcess,
 )
 
@@ -441,6 +482,7 @@ watch(
     JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
     JSON.stringify(state.bandParams),
     JSON.stringify(state.bandLocalErrors),
+    continuumKey(),
   ],
   () => {
     window.clearTimeout(bandTimer)
@@ -554,6 +596,7 @@ watch(
     JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
     JSON.stringify(state.bandParams),
     JSON.stringify(state.qcParams),
+    continuumKey(),
   ],
   () => {
     window.clearTimeout(logTimer)

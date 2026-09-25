@@ -37,5 +37,11 @@
 - GUI "Drill hole" view: strip log with a shared depth axis — truth composition, spectral
   image, mean reflectance, band position/depth/width tracks (with the generating AlOH
   centre overlaid), ratios, QC by flag type; click a depth to select the sample.
+- GUI: a "Continuum removed" switch (on by default) with an optional nm range in the
+  toolbar, applied after the recipe in both the spectra and drill-hole views (a real,
+  recorded `continuum_removal` step, included when the recipe is saved; disabled when the
+  recipe already removes the continuum).
+- GUI: Plotly's Chart Studio / "share" buttons removed — plotted data never leaves the
+  machine.
 - Faster processing: qhull convex hull, Savitzky-Golay on all spectra at once (same
   results); a 200-sample log builds in under a second.
