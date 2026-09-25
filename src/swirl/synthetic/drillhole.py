@@ -187,3 +187,74 @@ def synthetic_drillhole(
         )
         samples.append(apply_splice_offsets(add_noise(clean, rng, cfg.noise), offsets))
     return samples
+
+
+# --- samples whose hole and depth are only in their names --------------------------------
+
+NAMED_HOLES = (
+    # hole id, top, bottom, interval (m); SYN_02 uses a 1.5 m interval, hence decimal depths.
+    ("SYN_01", 0.0, 120.0, 3.0),
+    ("SYN_02", 300.0, 360.0, 1.5),
+    ("SYN_03", 50.0, 170.0, 3.0),
+)
+
+
+def _depth_text(depth: float) -> str:
+    return f"{depth:g}"
+
+
+def synthetic_named_samples(seed: int = 20260927) -> tuple[list[Spectrum], str]:
+    """Samples of three synthetic holes named ``<hole>_<depth>`` (e.g. ``SYN_02_301.5``),
+    without hole or depth metadata, plus the matching sample table (CSV text).
+
+    Two traps are included: a replicate ``SYN_03_110_rep`` and a white reference
+    ``WHITE_REF``, which carry no depth. The true hole and depth are kept in
+    ``synthetic_true_hole`` / ``synthetic_true_depth`` for testing. The table lists every
+    regular sample (not the traps) plus two samples that are not in the set.
+    """
+    spectra: list[Spectrum] = []
+    rows = ["SampleID,HoleID,From,To"]
+    for k, (hole, top, bottom, interval) in enumerate(NAMED_HOLES):
+        cfg = DrillholeConfig(
+            hole_id=hole, top=top, bottom=bottom, interval=interval, seed=seed + k, dark_samples=0
+        )
+        for s in synthetic_drillhole(cfg):
+            depth = float(s.meta[mk.DEPTH_FROM])
+            name = f"{hole}_{_depth_text(depth)}"
+            meta = {
+                key: v
+                for key, v in s.meta.items()
+                if key not in (mk.HOLE_ID, mk.DEPTH_FROM, mk.DEPTH_TO, mk.SAMPLE_ID)
+            }
+            meta.update({"synthetic_true_hole": hole, "synthetic_true_depth": depth})
+            spectra.append(
+                Spectrum(
+                    wavelength=s.wavelength,
+                    values=s.values,
+                    name=name,
+                    meta=meta,
+                    history=s.history,
+                )
+            )
+            rows.append(f"{name},{hole},{_depth_text(depth)},{_depth_text(depth + interval)}")
+    base = next(s for s in spectra if s.name == "SYN_03_110")
+    spectra.append(
+        Spectrum(
+            wavelength=base.wavelength,
+            values=base.values * 1.01,
+            name="SYN_03_110_rep",
+            meta={**base.meta},
+            history=base.history,
+        )
+    )
+    wl = spectra[0].wavelength
+    spectra.append(
+        Spectrum(
+            wavelength=wl,
+            values=np.full(wl.size, 0.98),
+            name="WHITE_REF",
+            meta={"synthetic": True, "synthetic_true_hole": None, "synthetic_true_depth": None},
+        )
+    )
+    rows += ["SYN_01_999,SYN_01,999,1002", "SYN_04_12,SYN_04,12,15"]
+    return spectra, "\n".join(rows) + "\n"

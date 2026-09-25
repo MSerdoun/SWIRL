@@ -9,6 +9,8 @@ swirl.synthetic   end-members with known ground truth, for tests and calibration
 swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
 swirl.features    band parameters (position, depth, width, asymmetry, ratios); later matching, rules
 swirl.drillhole   samples grouped by hole and depth; strip-log arrays (build_log)
+swirl.naming      hole & depth read from names by example (rule inference, no regex for users)
+swirl.sampletable sample sheets (CSV/TSV) joined to spectra
 swirl.project     .swirl projects: spectra (exact) + session settings; GUI ↔ notebook bridge
 swirl.cli         command line (`swirl ...`)
 swirl.app         FastAPI backend (in-memory workspace + JSON API) serving the Vue frontend

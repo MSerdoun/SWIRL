@@ -373,10 +373,10 @@ onBeforeUnmount(() => {
     </v-alert>
     <div class="position-relative flex-grow-1" style="min-height: 0">
       <div ref="el" class="h-100 w-100" />
-      <div v-if="!state.holes.length" class="position-absolute d-flex align-center justify-center text-muted text-center pa-6" style="inset: 0; pointer-events: none">
-        No drill hole loaded. Spectra need <span class="mono mx-1">hole_id</span> and
-        <span class="mono mx-1">depth_from</span> metadata — or load the synthetic drill hole
-        from the flask menu.
+      <div v-if="!state.holes.length" class="position-absolute d-flex flex-column align-center justify-center text-muted text-center pa-6 ga-3" style="inset: 0">
+        <div>No drill hole yet: the spectra have no hole and depth.</div>
+        <v-btn color="primary" variant="tonal" @click="state.holesDialog = true">Assign holes &amp; depths…</v-btn>
+        <div class="text-caption">Read them from the file names by example, or from a sample table.</div>
       </div>
     </div>
   </div>

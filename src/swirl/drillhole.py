@@ -16,7 +16,7 @@ from typing import Any
 import numpy as np
 
 from swirl.core import meta as mk
-from swirl.core.spectrum import FloatArray, Quantity, SpectralSet, Spectrum
+from swirl.core.spectrum import FloatArray, ProcessingStep, Quantity, SpectralSet, Spectrum
 from swirl.features import BandParams, extract_bands
 from swirl.preprocess import QCParams, QCResult, Recipe, run_qc
 
@@ -180,3 +180,77 @@ def build_log(
         truth_aloh_center=truth_aloh,
         notes=notes,
     )
+
+
+# --- assigning holes and depths to spectra ------------------------------------------------
+
+HOLE_KEYS = (mk.HOLE_ID, mk.DEPTH_FROM, mk.DEPTH_TO, "depth")
+
+
+def assign_hole_depth(
+    spectrum: Spectrum,
+    hole_id: str,
+    depth_from: float,
+    depth_to: float | None = None,
+    *,
+    source: str,
+    rule: str = "",
+) -> Spectrum:
+    """A copy of ``spectrum`` with hole and depths in its metadata, recorded in its history."""
+    to = depth_from if depth_to is None else depth_to
+    meta = {**spectrum.meta, mk.HOLE_ID: hole_id, mk.DEPTH_FROM: depth_from, mk.DEPTH_TO: to}
+    meta.pop("depth", None)
+    step = ProcessingStep(
+        "assign_hole_depth",
+        {
+            "source": source,
+            "rule": rule,
+            "hole_id": hole_id,
+            "depth_from": depth_from,
+            "depth_to": to,
+        },
+    )
+    return spectrum.derive(step, meta=meta)
+
+
+def clear_hole_depth(spectrum: Spectrum) -> Spectrum:
+    """A copy of ``spectrum`` without hole and depth metadata (recorded in its history)."""
+    if not any(k in spectrum.meta for k in HOLE_KEYS):
+        return spectrum
+    meta = {k: v for k, v in spectrum.meta.items() if k not in HOLE_KEYS}
+    return spectrum.derive(ProcessingStep("clear_hole_depth", {}), meta=meta)
+
+
+def summarize_assignments(
+    assignments: Sequence[tuple[str, float, float] | None],
+) -> dict[str, Any]:
+    """Holes found, and what looks suspicious, for a preview before applying."""
+    per_hole: dict[str, list[float]] = {}
+    for a in assignments:
+        if a is not None:
+            per_hole.setdefault(a[0], []).append(a[1])
+    holes_out = [
+        {"hole_id": h, "n": len(d), "top": min(d), "bottom": max(d)}
+        for h, d in sorted(per_hole.items())
+    ]
+    warnings = []
+    single = [h for h, d in per_hole.items() if len(d) == 1]
+    if single:
+        warnings.append(
+            f"{len(single)} hole(s) with a single sample, possibly a misread name: "
+            + ", ".join(sorted(single)[:5])
+            + ("…" if len(single) > 5 else "")
+        )
+    dupes = {h: len(d) - len(set(d)) for h, d in per_hole.items() if len(d) != len(set(d))}
+    if dupes:
+        warnings.append(
+            "several samples at the same depth (replicates?) in "
+            + ", ".join(f"{h} ({n})" for h, n in sorted(dupes.items()))
+        )
+    matched = sum(a is not None for a in assignments)
+    return {
+        "matched": matched,
+        "unmatched": len(assignments) - matched,
+        "holes": holes_out,
+        "warnings": warnings,
+    }

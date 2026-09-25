@@ -151,6 +151,18 @@ def _cmd_synth_hole(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_synth_names(args: argparse.Namespace) -> int:
+    from swirl.synthetic.drillhole import synthetic_named_samples
+
+    spectra, table = synthetic_named_samples()
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    for s in spectra:
+        write([s], args.outdir / f"{s.name}.txt")
+    (args.outdir / "samples.csv").write_text(table, encoding="utf-8")
+    print(f"{len(spectra)} files (hole and depth only in the names) + samples.csv -> {args.outdir}")
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     try:
         from swirl.app import launch
@@ -203,6 +215,12 @@ def build_parser() -> argparse.ArgumentParser:
     hole.add_argument("--config", type=Path, help="TOML overriding the drill-hole settings")
     hole.add_argument("--seed", type=int, default=None)
     hole.set_defaults(func=_cmd_synth_hole)
+
+    names = sub.add_parser(
+        "synth-names", help="synthetic sample files whose hole and depth are only in the names"
+    )
+    names.add_argument("outdir", type=Path)
+    names.set_defaults(func=_cmd_synth_names)
 
     app = sub.add_parser("app", help="start the graphical interface in the browser")
     app.add_argument("--host", default="127.0.0.1")

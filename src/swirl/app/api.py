@@ -9,8 +9,8 @@ import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict
-from pathlib import Path
-from typing import Any
+from pathlib import Path, PurePath
+from typing import Any, Literal
 
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -21,10 +21,18 @@ from swirl._version import __version__
 from swirl.app.workspace import Entry, Workspace, as_set, group_by_grid
 from swirl.core import meta as mk
 from swirl.core.spectrum import SpectralSet, Spectrum
-from swirl.drillhole import as_sample, build_log, holes
+from swirl.drillhole import (
+    as_sample,
+    assign_hole_depth,
+    build_log,
+    clear_hole_depth,
+    holes,
+    summarize_assignments,
+)
 from swirl.features import BandParams, SpectrumBands, extract_bands, write_band_table
 from swirl.io import formats, read
 from swirl.io.text import write_text
+from swirl.naming import Inference, NamingExample, apply_rules, infer_rules
 from swirl.preprocess import (
     ProcessingError,
     QCParams,
@@ -35,6 +43,15 @@ from swirl.preprocess import (
     run_qc,
 )
 from swirl.project import EXTENSION, ProjectError, load_project, save_project
+from swirl.sampletable import (
+    MatchReport,
+    SampleTable,
+    SampleTableError,
+    TableMapping,
+    guess_mapping,
+    match_table,
+    read_sample_table,
+)
 from swirl.synthetic import generative_bands, truth_in_window
 
 # --- JSON helpers ---------------------------------------------------------------------------
@@ -70,6 +87,7 @@ def summary(entry: Entry) -> dict[str, Any]:
         "n_bands": s.n_bands,
         "wl_min": float(s.wavelength[0]),
         "wl_max": float(s.wavelength[-1]),
+        "file": PurePath(str(s.meta[mk.SOURCE_PATH])).stem if s.meta.get(mk.SOURCE_PATH) else None,
         "hole_id": sample.hole_id if sample else None,
         "depth_from": sample.depth_from if sample else None,
         "depth_to": sample.depth_to if sample else None,
@@ -125,6 +143,21 @@ class ProjectSaveIn(BaseModel):
     settings: dict[str, Any] = Field(default_factory=dict)
     visible_ids: list[str] = Field(default_factory=list)
     focused_id: str | None = None
+
+
+class NamingIn(BaseModel):
+    examples: list[NamingExample]
+    source: Literal["name", "file"] = "name"
+    only_unassigned: bool = False
+
+
+class TableIn(BaseModel):
+    table_id: str
+    mapping: TableMapping
+
+
+class ClearIn(BaseModel):
+    ids: list[str] | None = None
 
 
 class QCIn(BaseModel):
@@ -383,6 +416,170 @@ def build_router(workspace: Workspace) -> APIRouter:
             "focused_id": focused_id,
             "warnings": warnings,
         }
+
+    tables: dict[str, SampleTable] = {}
+
+    def key_of(entry: Entry, source: str) -> str:
+        if source == "file":
+            src = entry.spectrum.meta.get(mk.SOURCE_PATH)
+            if src:
+                return PurePath(str(src)).stem
+        return entry.spectrum.name
+
+    def preview_rows(
+        entries: list[Entry], keys: list[str], found: list[tuple[str, float, float] | None]
+    ) -> list[dict[str, Any]]:
+        seen: dict[tuple[str, float], int] = {}
+        for f in found:
+            if f is not None:
+                seen[(f[0], f[1])] = seen.get((f[0], f[1]), 0) + 1
+        rows = []
+        for e, k, f in zip(entries, keys, found, strict=True):
+            status = "unmatched" if f is None else "duplicate" if seen[(f[0], f[1])] > 1 else "ok"
+            rows.append(
+                {
+                    "id": e.id,
+                    "key": k,
+                    "hole_id": f[0] if f else None,
+                    "depth_from": f[1] if f else None,
+                    "depth_to": f[2] if f else None,
+                    "current_hole": e.spectrum.meta.get(mk.HOLE_ID),
+                    "status": status,
+                }
+            )
+        return rows
+
+    def naming_targets(body: NamingIn) -> list[Entry]:
+        entries = workspace.entries()
+        if body.only_unassigned:
+            entries = [e for e in entries if as_sample(e.spectrum) is None]
+        return entries
+
+    def run_naming(
+        body: NamingIn,
+    ) -> tuple[list[Entry], list[str], Inference, list[tuple[str, float, float] | None]]:
+        entries = naming_targets(body)
+        keys = [key_of(e, body.source) for e in entries]
+        try:
+            inference = infer_rules(body.examples, keys)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        # Names give a point depth: the interval is [depth, depth].
+        found = [(hd[0], hd[1], hd[1]) if hd else None for hd in apply_rules(inference.rules, keys)]
+        return entries, keys, inference, found
+
+    @router.post("/holes/naming/preview")
+    def naming_preview(body: NamingIn) -> dict[str, Any]:
+        entries, keys, inference, found = run_naming(body)
+        return {
+            "rules": [r.description for r in inference.rules],
+            "single_rule": inference.single,
+            "rows": preview_rows(entries, keys, found),
+            "summary": summarize_assignments(found),
+        }
+
+    @router.post("/holes/naming/apply")
+    def naming_apply(body: NamingIn) -> dict[str, Any]:
+        entries, _, inference, found = run_naming(body)
+        rule = " | ".join(r.description for r in inference.rules)
+        applied = 0
+        for e, f in zip(entries, found, strict=True):
+            if f is not None:
+                workspace.replace(
+                    e.id,
+                    assign_hole_depth(
+                        e.spectrum, f[0], f[1], f[2], source=f"name ({body.source})", rule=rule
+                    ),
+                )
+                applied += 1
+        return {"applied": applied, "spectra": [summary(e) for e in workspace.entries()]}
+
+    @router.post("/holes/table")
+    async def table_upload(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+        try:
+            table = read_sample_table(await file.read(), file.filename or "table.csv")
+        except SampleTableError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        table_id = f"t{len(tables) + 1}"
+        tables[table_id] = table
+        return {
+            "table_id": table_id,
+            "filename": table.filename,
+            "columns": table.columns,
+            "n_rows": len(table.rows),
+            "head": table.rows[:8],
+            "mapping": guess_mapping(table.columns),
+        }
+
+    def run_table(body: TableIn) -> tuple[list[Entry], list[str], MatchReport]:
+        table = tables.get(body.table_id)
+        if table is None:
+            raise HTTPException(
+                status_code=404, detail="the table is no longer loaded; upload it again"
+            )
+        entries = workspace.entries()
+        keys = [key_of(e, body.mapping.match_on) for e in entries]
+        try:
+            report = match_table(table, body.mapping, keys)
+        except SampleTableError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return entries, keys, report
+
+    @router.post("/holes/table/preview")
+    def table_preview(body: TableIn) -> dict[str, Any]:
+        entries, keys, report = run_table(body)
+        found = [(a.hole_id, a.depth_from, a.depth_to) if a else None for a in report.assignments]
+        s = summarize_assignments(found)
+        if report.unused_rows:
+            s["warnings"].append(
+                f"{len(report.unused_rows)} table row(s) match no spectrum: "
+                + ", ".join(report.unused_rows[:5])
+                + ("…" if len(report.unused_rows) > 5 else "")
+            )
+        if report.duplicate_keys:
+            s["warnings"].append(
+                f"{len(report.duplicate_keys)} duplicated sample id(s) in the table (first kept)"
+            )
+        if report.bad_rows:
+            s["warnings"].append(
+                f"{len(report.bad_rows)} row(s) without hole or numeric depth ignored"
+            )
+        return {"rows": preview_rows(entries, keys, found), "summary": s}
+
+    @router.post("/holes/table/apply")
+    def table_apply(body: TableIn) -> dict[str, Any]:
+        entries, _, report = run_table(body)
+        table = tables[body.table_id]
+        applied = 0
+        for e, a in zip(entries, report.assignments, strict=True):
+            if a is not None:
+                workspace.replace(
+                    e.id,
+                    assign_hole_depth(
+                        e.spectrum,
+                        a.hole_id,
+                        a.depth_from,
+                        a.depth_to,
+                        source=f"table {table.filename}",
+                    ),
+                )
+                applied += 1
+        return {"applied": applied, "spectra": [summary(e) for e in workspace.entries()]}
+
+    @router.post("/holes/clear")
+    def holes_clear(body: ClearIn) -> dict[str, Any]:
+        targets = workspace.entries() if body.ids is None else lookup(body.ids)
+        for e in targets:
+            workspace.replace(e.id, clear_hole_depth(e.spectrum))
+        return {"spectra": [summary(e) for e in workspace.entries()]}
+
+    @router.post("/spectra/examples/named")
+    def load_example_named() -> dict[str, Any]:
+        from swirl.synthetic.drillhole import synthetic_named_samples
+
+        spectra, _ = synthetic_named_samples()
+        added = workspace.add(spectra, "synthetic named files")
+        return {"added": [summary(e) for e in added], "errors": []}
 
     @router.get("/operations")
     def list_operations() -> list[dict[str, Any]]:

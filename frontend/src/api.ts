@@ -8,6 +8,7 @@ export interface SpectrumSummary {
   n_bands: number
   wl_min: number
   wl_max: number
+  file: string | null
   hole_id: string | null
   depth_from: number | null
   depth_to: number | null
@@ -149,6 +150,39 @@ export interface OpenedProject {
   warnings: string[]
 }
 
+export interface AssignRow {
+  id: string
+  key: string
+  hole_id: string | null
+  depth_from: number | null
+  depth_to: number | null
+  current_hole: string | null
+  status: 'ok' | 'unmatched' | 'duplicate'
+}
+
+export interface AssignSummary {
+  matched: number
+  unmatched: number
+  holes: HoleInfo[]
+  warnings: string[]
+}
+
+export interface NamingExample {
+  name: string
+  hole: [number, number]
+  depth: [number, number]
+}
+
+export interface TableMappingIn {
+  key: string | null
+  hole: string | null
+  depth_from: string | null
+  depth_to: string | null
+  match_on: 'name' | 'file'
+  ignore_case: boolean
+  ignore_extension: boolean
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -213,6 +247,33 @@ export const api = {
   },
   examples: () => request<Added>('POST', '/api/spectra/examples'),
   exampleHole: () => request<Added>('POST', '/api/spectra/examples/hole'),
+  exampleNamed: () => request<Added>('POST', '/api/spectra/examples/named'),
+  namingPreview: (examples: NamingExample[], source: 'name' | 'file') =>
+    request<{ rules: string[]; single_rule: boolean; rows: AssignRow[]; summary: AssignSummary }>(
+      'POST',
+      '/api/holes/naming/preview',
+      { examples, source },
+    ),
+  namingApply: (examples: NamingExample[], source: 'name' | 'file') =>
+    request<{ applied: number; spectra: SpectrumSummary[] }>('POST', '/api/holes/naming/apply', { examples, source }),
+  tableUpload(file: File) {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    return request<{
+      table_id: string
+      filename: string
+      columns: string[]
+      n_rows: number
+      head: string[][]
+      mapping: Record<string, string | null>
+    }>('POST', '/api/holes/table', form)
+  },
+  tablePreview: (table_id: string, mapping: TableMappingIn) =>
+    request<{ rows: AssignRow[]; summary: AssignSummary }>('POST', '/api/holes/table/preview', { table_id, mapping }),
+  tableApply: (table_id: string, mapping: TableMappingIn) =>
+    request<{ applied: number; spectra: SpectrumSummary[] }>('POST', '/api/holes/table/apply', { table_id, mapping }),
+  clearHoles: (ids: string[] | null) =>
+    request<{ spectra: SpectrumSummary[] }>('POST', '/api/holes/clear', { ids }),
   holes: () => request<HoleInfo[]>('GET', '/api/holes'),
   log: (body: {
     hole_id: string

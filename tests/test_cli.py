@@ -59,3 +59,13 @@ def test_bands_cli(tmp_path, synthetic_dir):
     f = str(synthetic_dir / "illite.txt")
     assert main(["bands", f, "--recipe", str(recipe), "--config", str(cfg), "--out", str(out)]) == 0
     assert "gaussian" in out.read_text()
+
+
+def test_synth_names_cli(tmp_path):
+    from swirl import read
+
+    assert main(["synth-names", str(tmp_path)]) == 0
+    files = sorted(p.name for p in tmp_path.iterdir())
+    assert len(files) == 123 and "samples.csv" in files and "SYN_02_301.5.txt" in files
+    (s,) = read(tmp_path / "SYN_02_301.5.txt")
+    assert s.name == "SYN_02_301.5" and "hole_id" not in s.meta

@@ -40,6 +40,14 @@ class Workspace:
                 raise KeyError(", ".join(missing))
             return [self._entries[i] for i in ids]
 
+    def replace(self, entry_id: str, spectrum: Spectrum) -> Entry:
+        """Put a new version of a spectrum in place (same id, same position)."""
+        with self._lock:
+            old = self._entries[entry_id]
+            entry = Entry(entry_id, spectrum, old.source)
+            self._entries[entry_id] = entry
+            return entry
+
     def remove(self, entry_id: str) -> None:
         with self._lock:
             if self._entries.pop(entry_id, None) is None:

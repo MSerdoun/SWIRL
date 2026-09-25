@@ -52,6 +52,7 @@ swirl qc data/*.asd --config examples/recipes/qc.toml
 swirl bands data/*.asd --recipe examples/recipes/swir_basic.toml --out bands.csv
 swirl synth my_synthetic_set/                # regenerate the synthetic sample set
 swirl synth-hole hole.csv                    # synthetic drill hole with known zonation
+swirl synth-names folder/                    # synthetic files, hole & depth only in the names
 ```
 
 ## Graphical interface
@@ -67,6 +68,13 @@ every parameter form is generated from the operation's parameter model and the p
 live — check the quality-control table, inspect each spectrum's metadata and history, and
 export the processed spectra as CSV. Recipes load from / save to the same TOML/JSON files
 the command line uses.
+
+## Holes and depths
+
+The drill-hole view needs a hole and a depth per spectrum. SWIRL reads them from the names
+**by example** — click, in one name such as `SYN_02_354`, the hole and the depth, and the
+rule is applied to every name — or from a sample table (CSV). See
+[docs/holes_and_depths.md](docs/holes_and_depths.md).
 
 ## Projects
 

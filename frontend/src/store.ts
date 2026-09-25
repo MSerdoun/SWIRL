@@ -77,6 +77,7 @@ export const state = reactive({
   logErrors: [] as string[],
   logTracks: [] as string[],
   project: { name: '', created: null as string | null, dirty: false },
+  holesDialog: false,
   busy: false,
   notice: { show: false, text: '', color: 'error' },
 })
@@ -750,4 +751,36 @@ export async function newProject() {
     restoring = false
     state.project.dirty = false
   }, 0)
+}
+
+// --- hole / depth assignment ----------------------------------------------------------------
+
+export async function loadExampleNamed() {
+  state.busy = true
+  try {
+    const r = await api.exampleNamed()
+    addLoaded(r.added, r.errors)
+    state.holesDialog = true
+  } catch (err) {
+    notify(message(err))
+  } finally {
+    state.busy = false
+  }
+}
+
+/** Take the server's updated summaries after hole/depth metadata changed. */
+export async function spectraUpdated(spectra: SpectrumSummary[], text: string) {
+  const changed = new Set(
+    spectra
+      .filter((s) => {
+        const old = state.spectra.find((o) => o.id === s.id)
+        return !old || old.hole_id !== s.hole_id || old.depth_from !== s.depth_from
+      })
+      .map((s) => s.id),
+  )
+  state.spectra = spectra
+  for (const id of changed) delete state.inputs[id]
+  for (const id of changed) if (state.visible[id]) void api.spectrum(id).then((d) => (state.inputs[id] = d))
+  await refreshHoles()
+  notify(text, 'success')
 }

@@ -47,6 +47,13 @@
   with the project name, an unsaved-changes indicator and a warning before closing the tab.
   `Project.recipe()` / `band_params()` / `qc_params()` give notebooks the GUI's processing;
   `swirl.read` opens projects.
+- Holes & depths (`swirl.naming`, `swirl.sampletable`, GUI dialog): read the hole and the
+  depth from sample names **by example** — mark them once in a name such as `SYN_02_354`
+  (or press Suggest); SWIRL infers a rule (explained in words, no regular expression) that
+  reads every name, previews holes / names not read / warnings, and learns from further
+  examples — or join a CSV/TSV sample table (delimiter, decimal comma and columns
+  detected). Applied as recorded metadata changes, reversible; files untouched.
+  `swirl synth-names` writes synthetic files whose hole and depth are only in their names.
 - GUI: Plotly's Chart Studio / "share" buttons removed — plotted data never leaves the
   machine.
 - Faster processing: qhull convex hull, Savitzky-Golay on all spectra at once (same

@@ -14,6 +14,7 @@ import { useTheme } from 'vuetify'
 import BandsPanel from './components/BandsPanel.vue'
 import DetailsPanel from './components/DetailsPanel.vue'
 import DrillholeView from './components/DrillholeView.vue'
+import HolesDialog from './components/HolesDialog.vue'
 import QcPanel from './components/QcPanel.vue'
 import RecipePanel from './components/RecipePanel.vue'
 import SpectrumPlot from './components/SpectrumPlot.vue'
@@ -159,6 +160,8 @@ onMounted(init)
         </div>
       </div>
     </v-main>
+
+    <HolesDialog />
 
     <v-snackbar v-model="state.notice.show" :color="state.notice.color" timeout="5000" location="bottom left">
       <span style="white-space: pre-line">{{ state.notice.text }}</span>

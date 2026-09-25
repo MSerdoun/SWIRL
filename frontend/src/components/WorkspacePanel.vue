@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { mdiDeleteOutline, mdiDeleteSweepOutline, mdiFlaskOutline, mdiUpload } from '@mdi/js'
+import { mdiDeleteOutline, mdiDeleteSweepOutline, mdiFlaskOutline, mdiMapMarkerPath, mdiUpload } from '@mdi/js'
 import { computed, ref } from 'vue'
 import { useTheme } from 'vuetify'
 
 import { seriesColor } from '../palette'
-import { clearWorkspace, loadExampleHole, loadExamples, removeSpectrum, setAllVisible, setVisible, state, uploadFiles, visibleIds } from '../store'
+import { clearWorkspace, loadExampleHole, loadExampleNamed, loadExamples, removeSpectrum, setAllVisible, setVisible, state, uploadFiles, visibleIds } from '../store'
 
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
@@ -58,6 +58,10 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
               <v-list-item-title>Synthetic drill hole</v-list-item-title>
               <v-list-item-subtitle>200 samples, known alteration zonation</v-list-item-subtitle>
             </v-list-item>
+            <v-list-item @click="loadExampleNamed">
+              <v-list-item-title>Synthetic files, hole &amp; depth in the names</v-list-item-title>
+              <v-list-item-subtitle>122 spectra (SYN_01_3, SYN_02_301.5…), no depth metadata</v-list-item-subtitle>
+            </v-list-item>
           </v-list>
         </v-menu>
       </div>
@@ -68,6 +72,7 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
     <div v-if="state.spectra.length" class="px-4 pb-1 d-flex align-center ga-1">
       <v-checkbox-btn :model-value="allOn" :indeterminate="!allOn && visibleIds.length > 0" title="Show / hide all" @update:model-value="setAllVisible(!allOn)" />
       <v-text-field v-model="filter" placeholder="Filter" clearable class="flex-grow-1" />
+      <v-btn :icon="mdiMapMarkerPath" size="small" title="Holes & depths: read them from the names or a sample table" @click="state.holesDialog = true" />
       <v-btn :icon="mdiDeleteSweepOutline" size="small" title="Remove all spectra" @click="clearWorkspace" />
     </div>
 
@@ -93,7 +98,9 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
             <span class="text-truncate">{{ s.name }}</span>
           </v-list-item-title>
           <v-list-item-subtitle class="mono">
-            <template v-if="s.hole_id">{{ s.hole_id }} · {{ s.depth_from }}–{{ s.depth_to }} m</template>
+            <template v-if="s.hole_id">
+              {{ s.hole_id }} · {{ s.depth_to != null && s.depth_to !== s.depth_from ? `${s.depth_from}–${s.depth_to}` : s.depth_from }} m
+            </template>
             <template v-else>{{ s.quantity }} · {{ s.wl_min }}–{{ s.wl_max }} nm · {{ s.n_bands }} b</template>
           </v-list-item-subtitle>
           <template #append>

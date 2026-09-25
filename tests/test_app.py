@@ -208,3 +208,59 @@ def test_project_open_rejects_garbage_and_warns(client):
         "/api/project/open", files=[("file", ("p.swirl", blob, "application/zip"))]
     ).json()
     assert len(opened["warnings"]) == 2 and opened["settings"]["band_params"] == {}
+
+
+def test_naming_preview_apply_and_clear(client):
+    added = client.post("/api/spectra/examples/named").json()["added"]
+    assert len(added) == 122 and all(s["hole_id"] is None for s in added)
+    example = {"name": "SYN_02_354", "hole": [0, 6], "depth": [7, 10]}
+    prev = client.post("/api/holes/naming/preview", json={"examples": [example]}).json()
+    assert prev["summary"]["matched"] == 121 and prev["summary"]["unmatched"] == 1
+    assert [h["hole_id"] for h in prev["summary"]["holes"]] == ["SYN_01", "SYN_02", "SYN_03"]
+    row = next(r for r in prev["rows"] if r["key"] == "SYN_02_301.5")
+    assert (row["hole_id"], row["depth_from"], row["status"]) == ("SYN_02", 301.5, "ok")
+    assert any("same depth" in w for w in prev["summary"]["warnings"])  # the replicate
+    assert client.get("/api/holes").json() == []  # preview changes nothing
+
+    done = client.post("/api/holes/naming/apply", json={"examples": [example]}).json()
+    assert done["applied"] == 121
+    assert {h["hole_id"] for h in client.get("/api/holes").json()} == {"SYN_01", "SYN_02", "SYN_03"}
+    detail = client.get(f"/api/spectra/{added[0]['id']}").json()
+    assert detail["history"][-1]["name"] == "assign_hole_depth"
+
+    cleared = client.post("/api/holes/clear", json={}).json()
+    assert all(s["hole_id"] is None for s in cleared["spectra"])
+    bad = client.post(
+        "/api/holes/naming/preview",
+        json={"examples": [{"name": "ab", "hole": [0, 1], "depth": [1, 2]}]},
+    )
+    assert bad.status_code == 422
+
+
+def test_sample_table_flow(client):
+    from swirl.synthetic.drillhole import synthetic_named_samples
+
+    client.post("/api/spectra/examples/named")
+    _, table = synthetic_named_samples()
+    up = client.post(
+        "/api/holes/table", files=[("file", ("samples.csv", table.encode(), "text/csv"))]
+    ).json()
+    assert up["mapping"] == {
+        "key": "SampleID",
+        "hole": "HoleID",
+        "depth_from": "From",
+        "depth_to": "To",
+    }
+    body = {"table_id": up["table_id"], "mapping": up["mapping"]}
+    prev = client.post("/api/holes/table/preview", json=body).json()
+    assert prev["summary"]["matched"] == 120 and prev["summary"]["unmatched"] == 2
+    assert any("match no spectrum" in w for w in prev["summary"]["warnings"])
+    done = client.post("/api/holes/table/apply", json=body).json()
+    assert done["applied"] == 120
+    hole2 = next(h for h in client.get("/api/holes").json() if h["hole_id"] == "SYN_02")
+    assert hole2["top"] == 300 and hole2["bottom"] == 360
+    assert (
+        client.post("/api/holes/table/preview", json={**body, "table_id": "zz"}).status_code == 404
+    )
+    bad = client.post("/api/holes/table", files=[("file", ("x.csv", b"only header\n", "text/csv"))])
+    assert bad.status_code == 422
