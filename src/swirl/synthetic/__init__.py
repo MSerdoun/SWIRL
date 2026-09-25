@@ -248,6 +248,30 @@ def generate_sample_set(
     return truth
 
 
+def generative_bands(spectrum: Spectrum) -> tuple[Band, ...] | None:
+    """Bands a synthetic end-member was generated with (from its history), else None.
+
+    Mixtures and real spectra have no single generating end-member and return None.
+    """
+    for step in spectrum.history:
+        if step.name == "mix":
+            return None
+        if step.name == "synthesize":
+            features = step.params["end_member"]["features"]
+            return tuple(
+                Band(**{k: f[k] for k in ("center", "fwhm", "depth", "assignment")})
+                for f in features
+            )
+    return None
+
+
+def truth_in_window(spectrum: Spectrum, lo: float, hi: float) -> Band | None:
+    """The deepest generating band whose centre lies in [lo, hi], if any."""
+    bands = generative_bands(spectrum)
+    inside = [b for b in bands or () if lo <= b.center <= hi]
+    return max(inside, key=lambda b: b.depth) if inside else None
+
+
 __all__ = [
     "ASD_SWIR1_END",
     "ASD_VNIR_END",
@@ -262,7 +286,9 @@ __all__ = [
     "continuum",
     "default_grid",
     "generate_sample_set",
+    "generative_bands",
     "load_end_members",
     "mix",
     "synthesize",
+    "truth_in_window",
 ]

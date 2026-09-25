@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 
 import { seriesColor } from '../palette'
-import { state, visibleIds } from '../store'
+import { bandDefinitions, state, visibleIds } from '../store'
 
 const Y_TITLE: Record<string, string> = {
   reflectance: 'Reflectance',
@@ -16,6 +16,20 @@ const el = ref<HTMLDivElement | null>(null)
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
 let observer: ResizeObserver | undefined
+
+function interp(xs: (number | null)[], ys: (number | null)[], x: number): number | null {
+  let lo = 0
+  let hi = xs.length - 1
+  if (xs[lo] == null || xs[hi] == null || x < (xs[lo] as number) || x > (xs[hi] as number)) return null
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1
+    if ((xs[mid] as number) <= x) lo = mid
+    else hi = mid
+  }
+  const [x0, x1, y0, y1] = [xs[lo], xs[hi], ys[lo], ys[hi]] as number[]
+  if (y0 == null || y1 == null) return null
+  return x1 === x0 ? y0 : y0 + ((x - x0) / (x1 - x0)) * (y1 - y0)
+}
 
 const hasProcessed = computed(() => visibleIds.value.some((id) => state.processed[id]))
 const mode = computed(() => (hasProcessed.value ? state.viewMode : 'input'))
@@ -79,6 +93,64 @@ const figure = computed(() => {
     }
   }
 
+  // Band markers: on the processed curve when shown, else on the input curve.
+  if (state.showBandMarkers) {
+    for (const row of state.bandRows) {
+      if (!ids.includes(row.id)) continue
+      const onOutput = !!state.processed[row.id] && m !== 'input'
+      const curve = onOutput ? state.processed[row.id] : state.inputs[row.id]
+      if (!curve) continue
+      const xs: number[] = []
+      const ys: number[] = []
+      const text: string[] = []
+      for (const [band, meas] of Object.entries(row.bands)) {
+        if (meas.position == null || (meas.status !== 'minimum' && meas.status !== 'shoulder')) continue
+        const y = interp(curve.wavelength, curve.values, meas.position)
+        if (y == null) continue
+        xs.push(meas.position)
+        ys.push(y)
+        const t = row.truth?.[band]
+        text.push(
+          `${row.name} · ${band} (${meas.status})<br>${meas.position.toFixed(2)} nm · depth ${meas.depth?.toFixed(3)}` +
+            (t ? `<br>truth ${t.center} nm (Δ ${(meas.position - t.center).toFixed(2)})` : ''),
+        )
+      }
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        x: xs,
+        y: ys,
+        text,
+        hovertemplate: '%{text}<extra></extra>',
+        legendgroup: row.id,
+        showlegend: false,
+        marker: {
+          symbol: 'triangle-up',
+          size: 10,
+          color: seriesColor(state.slots[row.id], dark.value),
+          line: { color: dark.value ? '#1a1a19' : '#fcfcfb', width: 2 },
+        },
+        xaxis: 'x',
+        yaxis: stacked && onOutput ? 'y2' : 'y',
+      })
+    }
+  }
+
+  const shapes: unknown[] = []
+  const annotations: unknown[] = []
+  if (state.showBandWindows) {
+    for (const b of bandDefinitions.value) {
+      shapes.push({
+        type: 'rect', xref: 'x', yref: 'paper', x0: b.lo, x1: b.hi, y0: 0, y1: 1,
+        fillcolor: dark.value ? 'rgba(57,135,229,0.10)' : 'rgba(42,120,214,0.07)', line: { width: 0 }, layer: 'below',
+      })
+      annotations.push({
+        x: (b.lo + b.hi) / 2, xref: 'x', y: 1, yref: 'paper', yanchor: 'top', text: b.name,
+        showarrow: false, textangle: -90, font: { size: 9, color: muted },
+      })
+    }
+  }
+
   const axis = { gridcolor: grid, zeroline: false, linecolor: grid, tickcolor: grid, color: muted }
   const yTitle = (q: string) => Y_TITLE[q] ?? 'Value (mixed quantities)'
   const layout: Record<string, unknown> = {
@@ -90,6 +162,8 @@ const figure = computed(() => {
     hoverlabel: { bgcolor: dark.value ? '#262625' : '#ffffff', font: { color: ink } },
     legend: { orientation: 'h', y: 1.02, yanchor: 'bottom', x: 0, font: { color: muted } },
     uirevision: 'keep',
+    shapes,
+    annotations,
     xaxis: { ...axis, title: { text: 'Wavelength (nm)' }, anchor: stacked ? 'y2' : 'y' },
     yaxis: {
       ...axis,

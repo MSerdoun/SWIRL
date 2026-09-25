@@ -7,7 +7,7 @@ swirl.core        data model: Spectrum, SpectralSet, ProcessingStep, metadata ke
 swirl.io          file formats behind one registry: read(path) / write(spectra, path)
 swirl.synthetic   end-members with known ground truth, for tests and calibration
 swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
-swirl.features    (planned) absorption-feature extraction, scalars, library matching, rules
+swirl.features    band parameters (position, depth, width, asymmetry, ratios); later matching, rules
 swirl.cli         command line (`swirl ...`)
 swirl.app         FastAPI backend (in-memory workspace + JSON API) serving the Vue frontend
 frontend/         Vue 3 + Vuetify + Plotly; built into src/swirl/app/static

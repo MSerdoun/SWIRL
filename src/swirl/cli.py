@@ -118,6 +118,24 @@ def _cmd_qc(args: argparse.Namespace) -> int:
     return 1 if args.strict and flagged else 0
 
 
+def _cmd_bands(args: argparse.Namespace) -> int:
+    import tomllib
+
+    from swirl.features import BandParams, extract_bands, write_band_table
+    from swirl.preprocess import load_recipe
+
+    config = tomllib.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
+    params = BandParams.model_validate(config)
+    recipe = load_recipe(args.recipe) if args.recipe else None
+    results = []
+    for _, spectra in _read_all(args.files, args.format):
+        data = recipe.run(spectra) if recipe else SpectralSet.from_spectra(spectra)
+        results.extend(extract_bands(data, params))
+    write_band_table(results, params, args.out)
+    print(f"{len(results)} spectra, {len(params.bands)} bands -> {args.out}")
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     try:
         from swirl.app import launch
@@ -156,6 +174,14 @@ def build_parser() -> argparse.ArgumentParser:
     qc.add_argument("--format", default=None, help="force an input format")
     qc.add_argument("--strict", action="store_true", help="exit with 1 if anything is flagged")
     qc.set_defaults(func=_cmd_qc)
+
+    bands = sub.add_parser("bands", help="absorption-band parameters to a CSV table")
+    bands.add_argument("files", nargs="+", type=Path)
+    bands.add_argument("--out", type=Path, required=True, help="output CSV")
+    bands.add_argument("--recipe", type=Path, help="recipe applied before measuring")
+    bands.add_argument("--config", type=Path, help="TOML of band parameters (bands, method...)")
+    bands.add_argument("--format", default=None, help="force an input format")
+    bands.set_defaults(func=_cmd_bands)
 
     app = sub.add_parser("app", help="start the graphical interface in the browser")
     app.add_argument("--host", default="127.0.0.1")

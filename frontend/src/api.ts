@@ -79,6 +79,38 @@ export interface QcResult {
   flags: string[]
 }
 
+export interface BandMeasure {
+  position: number | null
+  depth: number | null
+  width: number | null
+  asymmetry: number | null
+  curvature: number | null
+  status: 'minimum' | 'shoulder' | 'absent' | 'no_data'
+  continuum: string
+}
+
+export interface BandTruth {
+  center: number
+  depth: number
+  fwhm: number
+  assignment: string
+}
+
+export interface BandRow {
+  id: string
+  name: string
+  bands: Record<string, BandMeasure>
+  ratios: Record<string, number | null>
+  truth: Record<string, BandTruth> | null
+}
+
+export interface BandDefinition {
+  name: string
+  center: number
+  lo: number
+  hi: number
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -140,6 +172,11 @@ export const api = {
       '/api/recipe/parse',
       { text, filename },
     ),
+  bandsSchema: () => request<JsonSchema & { $defs?: unknown }>('GET', '/api/bands/schema'),
+  bands: (ids: string[], steps: StepPayload[], params: Record<string, unknown>) =>
+    request<{ rows: BandRow[]; errors: GroupError[] }>('POST', '/api/bands', { ids, steps, params }),
+  bandsExport: (ids: string[], steps: StepPayload[], params: Record<string, unknown>) =>
+    request<string>('POST', '/api/bands/export', { ids, steps, params }),
   qcSchema: () => request<JsonSchema>('GET', '/api/qc/schema'),
   qc: (ids: string[], params: Record<string, unknown>) =>
     request<{ results: QcResult[]; errors: GroupError[] }>('POST', '/api/qc', { ids, params }),

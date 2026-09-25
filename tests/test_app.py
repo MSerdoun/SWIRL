@@ -116,3 +116,22 @@ def test_recipe_parse(client):
 def test_schema_defaults_are_exposed(client):
     ops = {o["name"]: o for o in client.get("/api/operations").json()}
     assert ops["splice_correction"]["schema"]["properties"]["boundaries"]["default"] == [1000, 1800]
+
+
+def test_bands_endpoint_with_truth(client):
+    ids = load_examples(client)
+    steps = [{"op": "continuum_removal", "params": {"start": 1300, "stop": 2500}}]
+    body = client.post(
+        "/api/bands", json={"ids": [ids["illite"], ids["chlorite"]], "steps": steps, "params": {}}
+    ).json()
+    rows = {r["name"]: r for r in body["rows"]}
+    assert rows["illite"]["bands"]["AlOH"]["position"] == pytest.approx(2205, abs=0.1)
+    assert rows["illite"]["truth"]["AlOH"]["center"] == 2205
+    assert "APS1480" not in rows["illite"]["truth"]
+    assert "log(MgOH/AlOH)" in rows["chlorite"]["ratios"]
+    bad = client.post("/api/bands", json={"ids": [ids["illite"]], "params": {"fit_points": 4}})
+    assert bad.status_code == 422
+    csv = client.post("/api/bands/export", json={"ids": [ids["illite"]], "steps": steps})
+    assert csv.status_code == 200 and "AlOH_position" in csv.text
+    schema = client.get("/api/bands/schema").json()
+    assert schema["properties"]["bands"]["default"][5]["name"] == "AlOH"

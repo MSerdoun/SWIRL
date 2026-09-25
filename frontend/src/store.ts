@@ -6,6 +6,8 @@ import { computed, reactive, watch } from 'vue'
 import {
   api,
   ApiError,
+  type BandDefinition,
+  type BandRow,
   type JsonSchema,
   type OperationInfo,
   type QcResult,
@@ -52,6 +54,15 @@ export const state = reactive({
   qcServerErrors: {} as Record<string, string>,
   qcResults: [] as QcResult[],
   qcErrors: [] as string[],
+  bandSchema: null as JsonSchema | null,
+  bandParams: {} as Record<string, unknown>,
+  bandLocalErrors: {} as Record<string, string>,
+  bandServerErrors: {} as Record<string, string>,
+  bandRows: [] as BandRow[],
+  bandErrors: [] as string[],
+  bandBusy: false,
+  showBandMarkers: true,
+  showBandWindows: true,
   busy: false,
   notice: { show: false, text: '', color: 'error' },
 })
@@ -110,12 +121,15 @@ async function ensureInput(id: string) {
 
 export async function init() {
   try {
-    const [health, ops, spectra, qcSchema] = await Promise.all([
+    const [health, ops, spectra, qcSchema, bandSchema] = await Promise.all([
       api.health(),
       api.operations(),
       api.spectra(),
       api.qcSchema(),
+      api.bandsSchema(),
     ])
+    state.bandSchema = bandSchema
+    state.bandParams = defaults(bandSchema)
     state.version = health.version
     state.operations = ops
     state.qcSchema = qcSchema
@@ -366,4 +380,99 @@ export function download(blob: Blob, filename: string) {
   a.download = filename
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// --- band parameters (measured on the recipe output) --------------------------------------
+
+export const bandDefinitions = computed(
+  () => (state.bandParams.bands as BandDefinition[] | undefined) ?? [],
+)
+
+let bandSeq = 0
+let bandTimer: number | undefined
+
+async function runBands() {
+  const seq = ++bandSeq
+  const ids = visibleIds.value
+  state.bandServerErrors = {}
+  if (!ids.length || !bandDefinitions.value.length) {
+    state.bandRows = []
+    state.bandErrors = []
+    return
+  }
+  if (Object.keys(state.bandLocalErrors).length) return
+  if (state.steps.some((s) => s.enabled && Object.keys(s.localErrors).length)) return
+  state.bandBusy = true
+  try {
+    const r = await api.bands(ids, activeSteps(), state.bandParams)
+    if (seq !== bandSeq) return
+    state.bandRows = r.rows
+    state.bandErrors = r.errors.map((e) => e.message)
+  } catch (err) {
+    if (seq !== bandSeq) return
+    state.bandRows = []
+    const d = err instanceof ApiError ? (err.detail as { params?: { loc: unknown[]; msg: string }[]; steps?: unknown }) : null
+    if (d && Array.isArray(d.params)) {
+      for (const e of d.params) state.bandServerErrors[String(e.loc[0] ?? '_')] = e.msg
+      state.bandErrors = d.params.map((e) => `${e.loc.join('.')}: ${e.msg}`)
+    } else if (d && d.steps) state.bandErrors = ['Fix the recipe parameters first.']
+    else state.bandErrors = [message(err)]
+  } finally {
+    if (seq === bandSeq) state.bandBusy = false
+  }
+}
+
+watch(
+  () => [
+    visibleIds.value.join(','),
+    JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
+    JSON.stringify(state.bandParams),
+    JSON.stringify(state.bandLocalErrors),
+  ],
+  () => {
+    window.clearTimeout(bandTimer)
+    bandTimer = window.setTimeout(runBands, 300)
+  },
+)
+
+export function addBand() {
+  const bands = [...bandDefinitions.value]
+  let n = bands.length + 1
+  while (bands.some((b) => b.name === `band${n}`)) n++
+  bands.push({ name: `band${n}`, center: 2200, lo: 2180, hi: 2220 })
+  state.bandParams.bands = bands
+}
+
+export function updateBand(index: number, patch: Partial<BandDefinition>) {
+  const bands = bandDefinitions.value.map((b, i) => (i === index ? { ...b, ...patch } : b))
+  const old = bandDefinitions.value[index]
+  state.bandParams.bands = bands
+  // Keep ratios consistent when a band is renamed.
+  if (patch.name && patch.name !== old.name) {
+    const ratios = (state.bandParams.ratios as [string, string][] | undefined) ?? []
+    state.bandParams.ratios = ratios.map(([a, b]) => [a === old.name ? patch.name! : a, b === old.name ? patch.name! : b])
+  }
+}
+
+export function removeBand(index: number) {
+  const name = bandDefinitions.value[index].name
+  state.bandParams.bands = bandDefinitions.value.filter((_, i) => i !== index)
+  const ratios = (state.bandParams.ratios as [string, string][] | undefined) ?? []
+  state.bandParams.ratios = ratios.filter(([a, b]) => a !== name && b !== name)
+}
+
+export function resetBands() {
+  if (state.bandSchema) state.bandParams = defaults(state.bandSchema)
+  state.bandLocalErrors = {}
+}
+
+export async function exportBands() {
+  const ids = visibleIds.value
+  if (!ids.length) return notify('Nothing to export: no spectrum is shown.')
+  try {
+    const text = await api.bandsExport(ids, activeSteps(), state.bandParams)
+    download(new Blob([text], { type: 'text/csv' }), 'swirl_bands.csv')
+  } catch (err) {
+    notify(message(err))
+  }
 }

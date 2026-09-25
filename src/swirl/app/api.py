@@ -7,6 +7,7 @@ import math
 import tempfile
 import tomllib
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +20,7 @@ from swirl._version import __version__
 from swirl.app.workspace import Entry, Workspace, as_set, group_by_grid
 from swirl.core import meta as mk
 from swirl.core.spectrum import SpectralSet, Spectrum
+from swirl.features import BandParams, SpectrumBands, extract_bands, write_band_table
 from swirl.io import formats, read
 from swirl.io.text import write_text
 from swirl.preprocess import (
@@ -30,6 +32,7 @@ from swirl.preprocess import (
     operations,
     run_qc,
 )
+from swirl.synthetic import generative_bands, truth_in_window
 
 # --- JSON helpers ---------------------------------------------------------------------------
 
@@ -93,6 +96,12 @@ class ProcessIn(BaseModel):
 class RecipeTextIn(BaseModel):
     text: str
     filename: str = "recipe.toml"
+
+
+class BandsIn(BaseModel):
+    ids: list[str]
+    steps: list[StepIn] = Field(default_factory=list)
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class QCIn(BaseModel):
@@ -245,6 +254,77 @@ def build_router(workspace: Workspace) -> APIRouter:
                 {"op": s.op, "params": s.params.model_dump(mode="json")} for s in recipe.steps
             ],
         }
+
+    def band_params(raw: Mapping[str, Any]) -> BandParams:
+        try:
+            return BandParams.model_validate(raw)
+        except ValidationError as exc:
+            errors = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+            raise HTTPException(status_code=422, detail={"params": errors}) from None
+
+    def run_bands(
+        body: BandsIn,
+    ) -> tuple[list[tuple[Entry, SpectrumBands, Spectrum]], list[dict[str, Any]]]:
+        recipe, params = _recipe(body.steps), band_params(body.params)
+        done: list[tuple[Entry, SpectrumBands, Spectrum]] = []
+        errors: list[dict[str, Any]] = []
+        for group in group_by_grid(lookup(body.ids)):
+            try:
+                out = _run(recipe, group)
+                results = extract_bands(out, params)
+            except ProcessingError as exc:
+                errors.append({"ids": [e.id for e in group], "message": str(exc)})
+                continue
+            done.extend(zip(group, results, out, strict=True))
+        return done, errors
+
+    @router.get("/bands/schema")
+    def bands_schema() -> dict[str, Any]:
+        return BandParams.model_json_schema()
+
+    @router.post("/bands")
+    def bands(body: BandsIn) -> dict[str, Any]:
+        """Band parameters of the given spectra after the recipe; synthetic truth if known."""
+        params = band_params(body.params)
+        done, errors = run_bands(body)
+        rows = []
+        for entry, r, _ in done:
+            truth = {}
+            for b in params.bands:
+                t = truth_in_window(entry.spectrum, b.lo, b.hi)
+                if t is not None:
+                    truth[b.name] = {
+                        "center": t.center,
+                        "depth": t.depth,
+                        "fwhm": t.fwhm,
+                        "assignment": t.assignment,
+                    }
+            rows.append(
+                {
+                    "id": entry.id,
+                    "name": r.name,
+                    "bands": {k: jsonable(asdict(m)) for k, m in r.bands.items()},
+                    "ratios": jsonable(r.ratios),
+                    "truth": truth if generative_bands(entry.spectrum) is not None else None,
+                }
+            )
+        return {"rows": rows, "errors": errors}
+
+    @router.post("/bands/export", response_class=PlainTextResponse)
+    def bands_export(body: BandsIn) -> PlainTextResponse:
+        params = band_params(body.params)
+        done, errors = run_bands(body)
+        if errors:
+            raise HTTPException(status_code=422, detail="; ".join(e["message"] for e in errors))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bands.csv"
+            write_band_table([r for _, r, _ in done], params, path)
+            text = path.read_text(encoding="utf-8")
+        return PlainTextResponse(
+            text,
+            media_type="text/csv",
+            headers={"Content-Disposition": 'attachment; filename="swirl_bands.csv"'},
+        )
 
     @router.get("/qc/schema")
     def qc_schema() -> dict[str, Any]:

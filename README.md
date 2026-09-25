@@ -8,8 +8,8 @@ point spectrometer data (ASD, TerraSpec, SVC…): import, quality control, pre-p
 absorption-feature extraction, mineral interpretation, down-hole visualisation and export.
 
 > **Status: pre-alpha (v0.1 in development).** Data model, text and ASD readers, synthetic
-> end-members, pre-processing (recipes), QC and a first graphical interface exist.
-> Interpretation (absorption features, minerals) is next — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> end-members, pre-processing (recipes), QC, absorption-band parameters and a first
+> graphical interface exist. Library matching and mineral rules are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Install (development)
 
@@ -49,6 +49,7 @@ swirl info examples/data/synthetic/*.txt     # summarise files
 swirl ops                                    # every operation, parameter, default
 swirl process examples/recipes/swir_basic.toml data/*.asd --outdir processed/
 swirl qc data/*.asd --config examples/recipes/qc.toml
+swirl bands data/*.asd --recipe examples/recipes/swir_basic.toml --out bands.csv
 swirl synth my_synthetic_set/                # regenerate the synthetic sample set
 ```
 

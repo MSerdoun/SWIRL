@@ -3,6 +3,7 @@ import { mdiChevronDown, mdiChevronUp, mdiWeatherNight, mdiWhiteBalanceSunny } f
 import { computed, onMounted, ref } from 'vue'
 import { useTheme } from 'vuetify'
 
+import BandsPanel from './components/BandsPanel.vue'
 import DetailsPanel from './components/DetailsPanel.vue'
 import QcPanel from './components/QcPanel.vue'
 import RecipePanel from './components/RecipePanel.vue'
@@ -62,10 +63,11 @@ onMounted(init)
       <div class="flex-grow-1" style="min-height: 0">
         <SpectrumPlot />
       </div>
-      <div class="border-t d-flex flex-column" :style="{ height: bottomOpen ? '290px' : '40px', flex: 'none' }">
+      <div class="border-t d-flex flex-column" :style="{ height: bottomOpen ? '340px' : '40px', flex: 'none' }">
         <div class="d-flex align-center">
           <v-tabs v-model="tab" density="compact" color="primary" @update:model-value="bottomOpen = true">
             <v-tab value="qc">Quality control</v-tab>
+            <v-tab value="bands">Band parameters</v-tab>
             <v-tab value="details">Details &amp; history</v-tab>
           </v-tabs>
           <v-spacer />
@@ -73,6 +75,7 @@ onMounted(init)
         </div>
         <div v-show="bottomOpen" class="flex-grow-1" style="min-height: 0">
           <QcPanel v-if="tab === 'qc'" />
+          <BandsPanel v-else-if="tab === 'bands'" />
           <DetailsPanel v-else />
         </div>
       </div>

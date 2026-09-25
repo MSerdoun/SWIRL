@@ -48,3 +48,14 @@ def test_qc_cli(tmp_path, synthetic_dir, capsys):
     cfg = tmp_path / "qc.toml"
     cfg.write_text("max_splice_step = 0.5\n")
     assert main(["qc", f, "--config", str(cfg), "--strict"]) == 0
+
+
+def test_bands_cli(tmp_path, synthetic_dir):
+    recipe = tmp_path / "r.toml"
+    recipe.write_text('[[steps]]\nop = "continuum_removal"\nstart = 1300\nstop = 2500\n')
+    cfg = tmp_path / "b.toml"
+    cfg.write_text('position_method = "gaussian"\nratios = []\n')
+    out = tmp_path / "bands.csv"
+    f = str(synthetic_dir / "illite.txt")
+    assert main(["bands", f, "--recipe", str(recipe), "--config", str(cfg), "--out", str(out)]) == 0
+    assert "gaussian" in out.read_text()

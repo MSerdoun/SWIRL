@@ -21,3 +21,10 @@
   (input / processed / both, stacked when quantities differ), live recipe editor with forms
   generated from the parameter models, recipe load/save, QC table with editable thresholds,
   metadata and history view, CSV export.
+- Absorption-band parameters (`swirl.features`): position (parabola / Gaussian / minimum),
+  depth, width at half depth, asymmetry, curvature, minimum/shoulder/absent status and depth
+  ratios, for an editable band table (defaults = the project's working definitions);
+  continuum from the recipe or local per window. `swirl bands` CLI and CSV export; GUI tab
+  with band-table and ratio editors, results matrix (including the error vs synthetic
+  truth), and band markers and search windows on the plot. Accuracy measured on the
+  synthetic set in docs/science/band_parameters.md.
