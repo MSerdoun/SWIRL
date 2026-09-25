@@ -8,8 +8,8 @@ point spectrometer data (ASD, TerraSpec, SVC…): import, quality control, pre-p
 absorption-feature extraction, mineral interpretation, down-hole visualisation and export.
 
 > **Status: pre-alpha (v0.1 in development).** Data model, text and ASD readers, synthetic
-> end-members, pre-processing (recipes) and QC exist. Interpretation and the graphical
-> interface are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
+> end-members, pre-processing (recipes), QC and a first graphical interface exist.
+> Interpretation (absorption features, minerals) is next — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Install (development)
 
@@ -51,6 +51,20 @@ swirl process examples/recipes/swir_basic.toml data/*.asd --outdir processed/
 swirl qc data/*.asd --config examples/recipes/qc.toml
 swirl synth my_synthetic_set/                # regenerate the synthetic sample set
 ```
+
+## Graphical interface
+
+```bash
+.venv/bin/pip install -e ".[app]"
+cd frontend && npm install && npm run build && cd ..   # once, and after frontend changes
+swirl app                                               # opens http://127.0.0.1:8765
+```
+
+Open ASD / text files (or drop them), tick the spectra to plot, build a recipe on the right —
+every parameter form is generated from the operation's parameter model and the plot updates
+live — check the quality-control table, inspect each spectrum's metadata and history, and
+export the processed spectra as CSV. Recipes load from / save to the same TOML/JSON files
+the command line uses.
 
 ## Supported formats
 

@@ -118,6 +118,16 @@ def _cmd_qc(args: argparse.Namespace) -> int:
     return 1 if args.strict and flagged else 0
 
 
+def _cmd_app(args: argparse.Namespace) -> int:
+    try:
+        from swirl.app import launch
+    except ImportError as exc:
+        print(f"the app needs the 'app' extra (pip install swirl-spectra[app]): {exc}")
+        return 2
+    launch(host=args.host, port=args.port, open_browser=not args.no_browser)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="swirl", description=__doc__)
     parser.add_argument("--version", action="version", version=f"swirl {__version__}")
@@ -146,6 +156,12 @@ def build_parser() -> argparse.ArgumentParser:
     qc.add_argument("--format", default=None, help="force an input format")
     qc.add_argument("--strict", action="store_true", help="exit with 1 if anything is flagged")
     qc.set_defaults(func=_cmd_qc)
+
+    app = sub.add_parser("app", help="start the graphical interface in the browser")
+    app.add_argument("--host", default="127.0.0.1")
+    app.add_argument("--port", type=int, default=8765)
+    app.add_argument("--no-browser", action="store_true", help="do not open a browser")
+    app.set_defaults(func=_cmd_app)
 
     synth = sub.add_parser("synth", help="write the synthetic end-member sample set")
     synth.add_argument("outdir", type=Path)

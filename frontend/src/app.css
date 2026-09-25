@@ -1,0 +1,22 @@
+html,
+body {
+  overflow: hidden;
+}
+.mono {
+  font-family: ui-monospace, 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.text-muted {
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+.drop-active {
+  outline: 2px dashed rgb(var(--v-theme-primary));
+  outline-offset: -6px;
+}
+.swatch {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+  flex: none;
+}

@@ -17,3 +17,7 @@
   `mask`, `resample`, `splice_correction`, `smooth`, `continuum_removal`.
 - Recipes (TOML / JSON) chaining operations; `swirl process`, `swirl ops`.
 - Quality control with settable thresholds; `swirl qc`.
+- Graphical interface (`swirl app`): file import (drag and drop), interactive spectrum plot
+  (input / processed / both, stacked when quantities differ), live recipe editor with forms
+  generated from the parameter models, recipe load/save, QC table with editable thresholds,
+  metadata and history view, CSV export.

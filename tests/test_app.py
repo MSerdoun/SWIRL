@@ -1,0 +1,118 @@
+import numpy as np
+import pytest
+from asd_factory import make_asd
+from fastapi.testclient import TestClient
+
+from swirl.app import create_app
+from swirl.app.workspace import Workspace
+
+
+@pytest.fixture
+def client():
+    return TestClient(create_app(Workspace(), static_dir=None))
+
+
+def load_examples(client):
+    r = client.post("/api/spectra/examples")
+    assert r.status_code == 200
+    return {s["name"]: s["id"] for s in r.json()["added"]}
+
+
+def test_health_and_root(client):
+    assert client.get("/api/health").json()["status"] == "ok"
+    assert "npm run build" in client.get("/").text
+
+
+def test_examples_and_detail(client):
+    ids = load_examples(client)
+    assert len(ids) == 8
+    d = client.get(f"/api/spectra/{ids['illite_noisy']}").json()
+    assert d["n_bands"] == 2151 and len(d["values"]) == 2151
+    assert d["meta"]["source_path"] == "illite_noisy.txt"
+    assert [h["name"] for h in d["history"]][-1] == "read_text"
+
+
+def test_upload_text_asd_and_bad_file(client, tmp_path):
+    wl = np.arange(350.0, 2501.0)
+    ref = np.full(wl.size, 20000.0)
+    asd = make_asd(tmp_path / "core.asd", 0.4 * ref, ref).read_bytes()
+    files = [
+        ("files", ("a.csv", b"wl,a\n350,0.1\n351,0.2\n", "text/csv")),
+        ("files", ("core.asd", asd, "application/octet-stream")),
+        ("files", ("bad.txt", b"no data here\n", "text/plain")),
+    ]
+    body = client.post("/api/spectra/upload", files=files).json()
+    assert [s["name"] for s in body["added"]] == ["a", "core"]
+    assert body["errors"][0]["file"] == "bad.txt"
+    assert len(client.get("/api/spectra").json()) == 2
+
+
+def test_operations_expose_schemas(client):
+    ops = {o["name"]: o for o in client.get("/api/operations").json()}
+    assert "window" in ops["smooth"]["schema"]["properties"]
+
+
+def test_process_groups_by_grid_and_records_history(client):
+    ids = load_examples(client)
+    client.post(
+        "/api/spectra/upload", files=[("files", ("x.csv", b"wl,x\n350,0.1\n351,0.2\n", "text/csv"))]
+    )
+    x_id = client.get("/api/spectra").json()[-1]["id"]
+    steps = [{"op": "splice_correction", "params": {}}, {"op": "smooth", "params": {"window": 7}}]
+    body = client.post(
+        "/api/process", json={"ids": [ids["illite_noisy"], ids["chlorite"], x_id], "steps": steps}
+    ).json()
+    done = {r["name"] for r in body["results"]}
+    assert done == {"illite_noisy", "chlorite"}
+    assert len(body["errors"]) == 1 and body["errors"][0]["ids"] == [x_id]
+    assert body["results"][0]["history"][-1]["params"]["window"] == 7
+
+
+def test_process_reports_invalid_steps(client):
+    ids = load_examples(client)
+    steps = [{"op": "smooth", "params": {"window": 10}}, {"op": "nope"}]
+    r = client.post("/api/process", json={"ids": [ids["illite"]], "steps": steps})
+    assert r.status_code == 422
+    problems = r.json()["detail"]["steps"]
+    assert [p["step"] for p in problems] == [0, 1]
+
+
+def test_qc_and_export(client):
+    ids = load_examples(client)
+    body = client.post("/api/qc", json={"ids": [ids["illite_noisy"]], "params": {}}).json()
+    assert "splice_step" in body["results"][0]["flags"]
+    assert client.post("/api/qc", json={"ids": [], "params": {"nope": 1}}).status_code == 422
+    r = client.post(
+        "/api/export",
+        json={"ids": [ids["illite"], ids["chlorite"]], "steps": [{"op": "continuum_removal"}]},
+    )
+    assert r.status_code == 200 and "wavelength_nm,illite,chlorite" in r.text
+    assert "# quantity: continuum_removed" in r.text
+
+
+def test_delete_and_unknown_ids(client):
+    ids = load_examples(client)
+    assert client.delete(f"/api/spectra/{ids['illite']}").status_code == 200
+    assert client.get(f"/api/spectra/{ids['illite']}").status_code == 404
+    assert client.post("/api/process", json={"ids": ["zz"], "steps": []}).status_code == 404
+    client.delete("/api/spectra")
+    assert client.get("/api/spectra").json() == []
+
+
+def test_recipe_parse(client):
+    toml = '[[steps]]\nop = "smooth"\nwindow = 7\n'
+    body = client.post("/api/recipe/parse", json={"text": toml, "filename": "r.toml"}).json()
+    assert body["steps"] == [
+        {"op": "smooth", "params": {"method": "savgol", "window": 7, "polyorder": 2}}
+    ]
+    bad = client.post("/api/recipe/parse", json={"text": "[[steps]]\nop='smooth'\nw=1\n"})
+    assert bad.status_code == 422 and "step 1" in bad.json()["detail"]
+    assert (
+        client.post("/api/recipe/parse", json={"text": "{", "filename": "x.json"}).status_code
+        == 422
+    )
+
+
+def test_schema_defaults_are_exposed(client):
+    ops = {o["name"]: o for o in client.get("/api/operations").json()}
+    assert ops["splice_correction"]["schema"]["properties"]["boundaries"]["default"] == [1000, 1800]

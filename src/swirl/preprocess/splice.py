@@ -28,7 +28,7 @@ METADATA_KEY = "splice_wavelengths"
 
 class SpliceParams(Params):
     boundaries: list[float] | Literal["metadata"] = Field(
-        default_factory=lambda: [1000.0, 1800.0],
+        default=[1000.0, 1800.0],
         description=(
             "Detector boundaries (nm): the last wavelength of each detector but the last. "
             "'metadata' uses each spectrum's own 'splice_wavelengths' (ASD header)."

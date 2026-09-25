@@ -11,3 +11,6 @@ dist/
 htmlcov/
 node_modules/
 .DS_Store
+
+# Built frontend (npm run build in frontend/)
+src/swirl/app/static/

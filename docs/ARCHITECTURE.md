@@ -9,7 +9,8 @@ swirl.synthetic   end-members with known ground truth, for tests and calibration
 swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
 swirl.features    (planned) absorption-feature extraction, scalars, library matching, rules
 swirl.cli         command line (`swirl ...`)
-swirl.app         (planned) FastAPI backend serving the Vue frontend — a client of the above
+swirl.app         FastAPI backend (in-memory workspace + JSON API) serving the Vue frontend
+frontend/         Vue 3 + Vuetify + Plotly; built into src/swirl/app/static
 ```
 
 Dependencies only point downwards: `core` imports nothing from SWIRL, `io` imports `core`,
@@ -49,6 +50,9 @@ carry their generating parameters (`truth.json`) for this purpose.
 
 **D8 — Local web GUI.** FastAPI + Vue, with the built frontend shipped inside the Python
 package; `swirl app` opens the browser. Point-spectra volumes fit in memory, so no tiling.
+The API only translates JSON to library calls; processing and QC always run server-side,
+so the GUI, the CLI and Python give identical results. Spectra on different grids are
+processed in separate groups rather than resampled behind the user's back.
 
 ## Naming
 

@@ -39,7 +39,7 @@ class QCParams(Params):
         description="Flag 'noisy' if the RMS residual from a smoothed copy exceeds this.",
     )
     splice_boundaries: list[float] | Literal["metadata"] = Field(
-        default_factory=lambda: [1000.0, 1800.0],
+        default=[1000.0, 1800.0],
         description="Detector boundaries (nm) at which steps are measured.",
     )
     max_splice_step: float | None = Field(
