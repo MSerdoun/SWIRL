@@ -101,6 +101,22 @@ register_format(
     )
 )
 
+
+def _read_project(path: Path, **kwargs: Any) -> list[Spectrum]:
+    from swirl.project import read_project_spectra
+
+    return read_project_spectra(path)
+
+
+register_format(
+    Format(
+        name="project",
+        extensions=(".swirl",),
+        reader=_read_project,
+        description="SWIRL project (spectra and session settings); read returns the spectra",
+    )
+)
+
 __all__ = [
     "ASDFormatError",
     "Format",

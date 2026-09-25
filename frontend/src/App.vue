@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import { mdiChevronDown, mdiChevronUp, mdiWeatherNight, mdiWhiteBalanceSunny } from '@mdi/js'
+import {
+  mdiChevronDown,
+  mdiChevronUp,
+  mdiContentSaveOutline,
+  mdiFileOutline,
+  mdiFolderOpenOutline,
+  mdiWeatherNight,
+  mdiWhiteBalanceSunny,
+} from '@mdi/js'
 import { computed, onMounted, ref } from 'vue'
 import { useTheme } from 'vuetify'
 
@@ -10,12 +18,20 @@ import QcPanel from './components/QcPanel.vue'
 import RecipePanel from './components/RecipePanel.vue'
 import SpectrumPlot from './components/SpectrumPlot.vue'
 import WorkspacePanel from './components/WorkspacePanel.vue'
-import { init, recipeRemovesContinuum, state, visibleIds } from './store'
+import { init, newProject, openProject, recipeRemovesContinuum, saveProject, state, visibleIds } from './store'
 
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
 const tab = ref('qc')
 const bottomOpen = ref(true)
+const projectInput = ref<HTMLInputElement | null>(null)
+
+async function onProjectFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (file) await openProject(file)
+  input.value = ''
+}
 
 function toggleTheme() {
   const next = dark.value ? 'light' : 'dark'
@@ -35,10 +51,27 @@ onMounted(init)
 <template>
   <v-app>
     <v-app-bar density="compact" flat border="b">
-      <v-app-bar-title>
+      <v-app-bar-title style="flex: none">
         <span class="font-weight-bold">SWIRL</span>
-        <span class="text-caption text-muted ml-2">VNIR-SWIR spectra · {{ state.version }}</span>
+        <span class="text-caption text-muted ml-2">{{ state.version }}</span>
       </v-app-bar-title>
+      <div class="d-flex align-center ga-1 ml-6">
+        <v-btn :icon="mdiFileOutline" size="small" title="New project" @click="newProject" />
+        <v-btn :icon="mdiFolderOpenOutline" size="small" title="Open a project (.swirl)" @click="projectInput?.click()" />
+        <v-btn :icon="mdiContentSaveOutline" size="small" title="Save the project (.swirl)" :disabled="!state.spectra.length" @click="saveProject" />
+        <input ref="projectInput" type="file" accept=".swirl" hidden @change="onProjectFile" />
+        <v-text-field
+          v-model="state.project.name"
+          placeholder="Untitled project"
+          density="compact"
+          variant="plain"
+          hide-details
+          class="ml-2"
+          style="width: 220px"
+        />
+        <span v-if="state.project.dirty && state.spectra.length" class="text-caption text-warning" title="Unsaved changes">● unsaved</span>
+      </div>
+      <v-spacer />
       <v-btn :icon="dark ? mdiWhiteBalanceSunny : mdiWeatherNight" title="Light / dark" @click="toggleTheme" />
     </v-app-bar>
 

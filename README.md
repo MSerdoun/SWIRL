@@ -68,6 +68,26 @@ live — check the quality-control table, inspect each spectrum's metadata and h
 export the processed spectra as CSV. Recipes load from / save to the same TOML/JSON files
 the command line uses.
 
+## Projects
+
+A project (`.swirl`) keeps the loaded spectra — exactly, with their metadata and history —
+together with the session: recipe (including disabled steps), continuum option, band and QC
+parameters, and what was on screen. Save / open it from the GUI toolbar; the original files
+are never touched. The same file opens in Python, which makes the GUI and notebooks
+interchangeable:
+
+```python
+from swirl.features import extract_bands
+from swirl.project import load_project
+
+p = load_project("demo.swirl")
+out = p.recipe().run(p.spectra)        # the processing the GUI showed
+bands = extract_bands(out, p.band_params())
+```
+
+`swirl.read("demo.swirl")` returns its spectra, so `swirl info / process / bands` accept
+projects too.
+
 ## Supported formats
 
 | Format | Read | Write | Notes |
@@ -75,6 +95,7 @@ the command line uses.
 | Delimited text (`.txt`, `.csv`, `.tsv`, `.dat`) | ✓ | ✓ | tab / `;` / `,` / whitespace, decimal point or comma, µm or nm, fraction or percent — every conversion is recorded in the spectrum history |
 | ASD binary (`.asd`, file versions 1–8) | ✓ | — | reflectance = target DN / white-reference DN (or the stored reflectance), raw DN or the white reference on request; header metadata kept. **Not yet validated on real instrument files.** |
 | `.sco` | ✓ (text reader) | — | read as delimited text |
+| SWIRL project (`.swirl`) | ✓ (spectra) | via the GUI or `swirl.project.save_project` | spectra + session settings |
 | `.sed`, `.sig` | planned | — | |
 
 ## Principles

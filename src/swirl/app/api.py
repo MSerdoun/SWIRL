@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import tempfile
@@ -13,7 +14,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, Response
 from pydantic import BaseModel, Field, ValidationError
 
 from swirl._version import __version__
@@ -33,6 +34,7 @@ from swirl.preprocess import (
     operations,
     run_qc,
 )
+from swirl.project import EXTENSION, ProjectError, load_project, save_project
 from swirl.synthetic import generative_bands, truth_in_window
 
 # --- JSON helpers ---------------------------------------------------------------------------
@@ -115,6 +117,14 @@ class LogIn(BaseModel):
     band_params: dict[str, Any] = Field(default_factory=dict)
     qc_params: dict[str, Any] = Field(default_factory=dict)
     image_max_bands: int = Field(400, ge=10, le=3000)
+
+
+class ProjectSaveIn(BaseModel):
+    name: str = ""
+    created: str | None = None
+    settings: dict[str, Any] = Field(default_factory=dict)
+    visible_ids: list[str] = Field(default_factory=list)
+    focused_id: str | None = None
 
 
 class QCIn(BaseModel):
@@ -302,6 +312,76 @@ def build_router(workspace: Workspace) -> APIRouter:
                 else None
             ),
             "notes": log.notes,
+        }
+
+    @router.post("/project/save")
+    def project_save(body: ProjectSaveIn) -> Response:
+        """The workspace spectra and the session settings as a .swirl file."""
+        entries = workspace.entries()
+        index = {e.id: i for i, e in enumerate(entries)}
+        ui = dict(body.settings.get("ui") or {})
+        ui["visible"] = [index[i] for i in body.visible_ids if i in index]
+        ui["focused"] = index.get(body.focused_id) if body.focused_id else None
+        settings = {**body.settings, "ui": ui, "sources": [e.source for e in entries]}
+        buf = io.BytesIO()
+        save_project(
+            buf, [e.spectrum for e in entries], settings, name=body.name, created=body.created
+        )
+        filename = (body.name or "project").replace('"', "") + EXTENSION
+        return Response(
+            buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.post("/project/open")
+    async def project_open(file: UploadFile = File(...)) -> dict[str, Any]:  # noqa: B008
+        """Replace the workspace with a project's spectra; return its settings."""
+        try:
+            project = load_project(io.BytesIO(await file.read()))
+        except ProjectError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        settings = project.settings
+        sources = settings.pop("sources", None) or []
+        workspace.clear()
+        added = []
+        for i, s in enumerate(project.spectra):
+            source = sources[i] if i < len(sources) else "project"
+            added.extend(workspace.add([s], str(source)))
+        ids = [e.id for e in added]
+        ui = dict(settings.get("ui") or {})
+        visible = [ids[i] for i in ui.pop("visible", []) or [] if 0 <= int(i) < len(ids)]
+        focused = ui.pop("focused", None)
+        focused_id = (
+            ids[int(focused)] if focused is not None and 0 <= int(focused) < len(ids) else None
+        )
+        settings["ui"] = ui
+
+        warnings = []
+        for key, model in (("band_params", BandParams), ("qc_params", QCParams)):
+            try:
+                model.model_validate(settings.get(key) or {})
+            except ValidationError as exc:
+                warnings.append(
+                    f"{key} from the project are invalid and were reset: {exc.errors()[0]['msg']}"
+                )
+                settings[key] = {}
+        steps = (settings.get("recipe") or {}).get("steps") or []
+        for i, st in enumerate(steps):
+            try:
+                get_operation(st["op"]).make_params(st.get("params") or {})
+            except (ProcessingError, ValidationError, KeyError) as exc:
+                warnings.append(f"recipe step {i + 1} ({st.get('op')}) is invalid: {exc}")
+        return {
+            "name": project.name or Path(file.filename or "project").stem,
+            "created": project.created,
+            "saved": project.saved,
+            "swirl_version": project.swirl_version,
+            "settings": settings,
+            "spectra": [summary(e) for e in added],
+            "visible_ids": visible,
+            "focused_id": focused_id,
+            "warnings": warnings,
         }
 
     @router.get("/operations")

@@ -41,6 +41,12 @@
   toolbar, applied after the recipe in both the spectra and drill-hole views (a real,
   recorded `continuum_removal` step, included when the recipe is saved; disabled when the
   recipe already removes the continuum).
+- Projects (`swirl.project`, `.swirl`): spectra stored bit-exact (float64 npz) with
+  metadata and history, plus the session settings (recipe with disabled steps, continuum
+  option, band and QC parameters, interface state) in readable JSON. GUI New / Open / Save
+  with the project name, an unsaved-changes indicator and a warning before closing the tab.
+  `Project.recipe()` / `band_params()` / `qc_params()` give notebooks the GUI's processing;
+  `swirl.read` opens projects.
 - GUI: Plotly's Chart Studio / "share" buttons removed — plotted data never leaves the
   machine.
 - Faster processing: qhull convex hull, Savitzky-Golay on all spectra at once (same

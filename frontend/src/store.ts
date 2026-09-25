@@ -11,6 +11,7 @@ import {
   type HoleInfo,
   type HoleLogData,
   type JsonSchema,
+  type OpenedProject,
   type OperationInfo,
   type QcResult,
   type SpectrumData,
@@ -75,6 +76,7 @@ export const state = reactive({
   logBusy: false,
   logErrors: [] as string[],
   logTracks: [] as string[],
+  project: { name: '', created: null as string | null, dirty: false },
   busy: false,
   notice: { show: false, text: '', color: 'error' },
 })
@@ -132,6 +134,7 @@ async function ensureInput(id: string) {
 // --- workspace ---------------------------------------------------------------------------
 
 export async function init() {
+  restoring = true
   try {
     const [health, ops, spectra, qcSchema, bandSchema] = await Promise.all([
       api.health(),
@@ -152,6 +155,11 @@ export async function init() {
     state.ready = true
   } catch (err) {
     notify(`Cannot reach the SWIRL server: ${message(err)}`)
+  } finally {
+    setTimeout(() => {
+      restoring = false
+      state.project.dirty = false
+    }, 0)
   }
 }
 
@@ -603,3 +611,143 @@ watch(
     logTimer = window.setTimeout(runLog, 300)
   },
 )
+
+// --- projects ------------------------------------------------------------------------------
+
+let restoring = false
+
+function settingsSnapshot() {
+  return {
+    recipe: {
+      name: state.recipeName,
+      steps: state.steps.map((s) => ({ op: s.op, params: { ...s.params }, enabled: s.enabled })),
+    },
+    continuum: { ...state.continuum },
+    band_params: state.bandParams,
+    qc_params: state.qcParams,
+    ui: {
+      main_view: state.mainView,
+      view_mode: state.viewMode,
+      selected_hole: state.selectedHole,
+      log_tracks: state.logTracks,
+      show_band_markers: state.showBandMarkers,
+      show_band_windows: state.showBandWindows,
+    },
+  }
+}
+
+// Anything saved in a project marks it modified.
+watch(
+  () => [JSON.stringify(settingsSnapshot()), state.spectra.length, visibleIds.value.join(',')],
+  () => {
+    if (!restoring) state.project.dirty = true
+  },
+)
+
+window.addEventListener('beforeunload', (e) => {
+  if (state.project.dirty && state.spectra.length) {
+    e.preventDefault()
+    e.returnValue = ''
+  }
+})
+
+export async function saveProject() {
+  const name = state.project.name || 'project'
+  try {
+    const blob = await api.saveProject({
+      name,
+      created: state.project.created,
+      settings: settingsSnapshot(),
+      visible_ids: visibleIds.value,
+      focused_id: state.focused,
+    })
+    download(blob, `${name.replace(/[^\w.-]+/g, '_')}.swirl`)
+    state.project.name = name
+    state.project.created ??= new Date().toISOString()
+    state.project.dirty = false
+    notify(`Project "${name}" saved (${state.spectra.length} spectra)`, 'success')
+  } catch (err) {
+    notify(message(err))
+  }
+}
+
+function applyProject(p: OpenedProject) {
+  const st = p.settings as Record<string, any> // eslint-disable-line @typescript-eslint/no-explicit-any
+  state.spectra = p.spectra
+  state.visible = {}
+  state.slots = {}
+  state.inputs = {}
+  state.processed = {}
+  state.bandRows = []
+  state.log = null
+  for (const id of p.visible_ids) setVisible(id, true)
+  for (const s of p.spectra) if (!state.visible[s.id]) state.visible[s.id] = false
+  state.focused = p.focused_id
+
+  state.steps = []
+  for (const step of st.recipe?.steps ?? []) {
+    if (!state.operations.some((o) => o.name === step.op)) continue
+    addStep(step.op, { ...(step.params ?? {}) })
+    state.steps[state.steps.length - 1].enabled = step.enabled !== false
+  }
+  for (const s of state.steps) s.open = false
+  state.recipeName = st.recipe?.name ?? ''
+  state.continuum = { on: true, start: '', stop: '', ...(st.continuum ?? {}) }
+  if (state.bandSchema) state.bandParams = { ...defaults(state.bandSchema), ...(st.band_params ?? {}) }
+  if (state.qcSchema) state.qcParams = { ...defaults(state.qcSchema), ...(st.qc_params ?? {}) }
+  state.bandLocalErrors = {}
+  state.qcLocalErrors = {}
+  const ui = st.ui ?? {}
+  state.mainView = ui.main_view === 'drillhole' ? 'drillhole' : 'spectra'
+  state.viewMode = ui.view_mode ?? 'both'
+  state.logTracks = ui.log_tracks ?? []
+  state.showBandMarkers = ui.show_band_markers ?? true
+  state.showBandWindows = ui.show_band_windows ?? true
+  state.project = { name: p.name, created: p.created || null, dirty: false }
+  return ui.selected_hole as string | null | undefined
+}
+
+export async function openProject(file: File) {
+  if (state.project.dirty && state.spectra.length && !window.confirm('Discard the unsaved changes of the current project?'))
+    return
+  state.busy = true
+  restoring = true
+  try {
+    const p = await api.openProject(file)
+    const hole = applyProject(p)
+    await refreshHoles()
+    if (hole && state.holes.some((h) => h.hole_id === hole)) state.selectedHole = hole
+    notify(
+      p.warnings.length ? `Project opened with warnings:\n${p.warnings.join('\n')}` : `Project "${p.name}" opened`,
+      p.warnings.length ? 'warning' : 'success',
+    )
+  } catch (err) {
+    notify(message(err))
+  } finally {
+    state.busy = false
+    // Let the watchers settle on the restored state before tracking changes again.
+    setTimeout(() => {
+      restoring = false
+      state.project.dirty = false
+    }, 0)
+  }
+}
+
+export async function newProject() {
+  if (state.project.dirty && state.spectra.length && !window.confirm('Discard the unsaved changes of the current project?'))
+    return
+  restoring = true
+  await clearWorkspace()
+  state.steps = []
+  state.recipeName = ''
+  state.continuum = { on: true, start: '', stop: '' }
+  if (state.bandSchema) state.bandParams = defaults(state.bandSchema)
+  if (state.qcSchema) state.qcParams = defaults(state.qcSchema)
+  state.logTracks = []
+  state.mainView = 'spectra'
+  state.project = { name: '', created: null, dirty: false }
+  setTimeout(() => {
+    restoring = false
+    state.project.dirty = false
+  }, 0)
+}

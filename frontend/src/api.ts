@@ -137,6 +137,18 @@ export interface HoleLogData {
   notes: string[]
 }
 
+export interface OpenedProject {
+  name: string
+  created: string
+  saved: string
+  swirl_version: string
+  settings: Record<string, unknown>
+  spectra: SpectrumSummary[]
+  visible_ids: string[]
+  focused_id: string | null
+  warnings: string[]
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -170,6 +182,24 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
 interface Added {
   added: SpectrumSummary[]
   errors: { file: string; message: string }[]
+}
+
+async function requestBlob(url: string, body: unknown): Promise<Blob> {
+  const res = await fetch(url, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) {
+    let detail: unknown = res.statusText
+    try {
+      detail = (await res.json()).detail
+    } catch {
+      /* keep statusText */
+    }
+    throw new ApiError(res.status, detail)
+  }
+  return res.blob()
 }
 
 export const api = {
@@ -212,6 +242,18 @@ export const api = {
     request<{ rows: BandRow[]; errors: GroupError[] }>('POST', '/api/bands', { ids, steps, params }),
   bandsExport: (ids: string[], steps: StepPayload[], params: Record<string, unknown>) =>
     request<string>('POST', '/api/bands/export', { ids, steps, params }),
+  saveProject: (body: {
+    name: string
+    created: string | null
+    settings: Record<string, unknown>
+    visible_ids: string[]
+    focused_id: string | null
+  }) => requestBlob('/api/project/save', body),
+  openProject(file: File) {
+    const form = new FormData()
+    form.append('file', file, file.name)
+    return request<OpenedProject>('POST', '/api/project/open', form)
+  },
   qcSchema: () => request<JsonSchema>('GET', '/api/qc/schema'),
   qc: (ids: string[], params: Record<string, unknown>) =>
     request<{ results: QcResult[]; errors: GroupError[] }>('POST', '/api/qc', { ids, params }),

@@ -153,3 +153,58 @@ def test_synthetic_hole_and_log(client):
     assert len(log["bands"]["AlOH"]["position"]) == 200
     assert sum("low_albedo" in f for f in log["qc"]) == 3
     assert client.post("/api/log", json={"hole_id": "nope"}).status_code == 404
+
+
+def test_project_save_and_open(client):
+    ids = load_examples(client)
+    client.post("/api/spectra/examples/hole")
+    n = len(client.get("/api/spectra").json())
+    settings = {
+        "recipe": {
+            "name": "r",
+            "steps": [{"op": "smooth", "params": {"window": 9}, "enabled": True}],
+        },
+        "continuum": {"on": True, "start": "", "stop": ""},
+        "band_params": {"min_depth": 0.01},
+        "qc_params": {},
+        "ui": {"main_view": "drillhole"},
+    }
+    body = {
+        "name": "demo",
+        "settings": settings,
+        "visible_ids": [ids["illite"], ids["chlorite"]],
+        "focused_id": ids["chlorite"],
+    }
+    r = client.post("/api/project/save", json=body)
+    assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
+    assert 'filename="demo.swirl"' in r.headers["content-disposition"]
+    blob = r.content
+
+    client.delete("/api/spectra")
+    opened = client.post(
+        "/api/project/open", files=[("file", ("demo.swirl", blob, "application/zip"))]
+    ).json()
+    assert opened["name"] == "demo" and opened["warnings"] == []
+    assert len(opened["spectra"]) == n
+    names = {s["id"]: s["name"] for s in opened["spectra"]}
+    assert [names[i] for i in opened["visible_ids"]] == ["illite", "chlorite"]
+    assert names[opened["focused_id"]] == "chlorite"
+    assert opened["settings"]["recipe"]["steps"][0]["params"]["window"] == 9
+    assert opened["settings"]["ui"]["main_view"] == "drillhole"
+    assert opened["spectra"][0]["source"] == "synthetic"
+    assert client.get("/api/holes").json()[0]["n"] == 200
+
+
+def test_project_open_rejects_garbage_and_warns(client):
+    r = client.post("/api/project/open", files=[("file", ("x.swirl", b"nope", "application/zip"))])
+    assert r.status_code == 422
+    load_examples(client)
+    settings = {
+        "band_params": {"fit_points": 4},
+        "recipe": {"steps": [{"op": "nope", "params": {}}]},
+    }
+    blob = client.post("/api/project/save", json={"settings": settings}).content
+    opened = client.post(
+        "/api/project/open", files=[("file", ("p.swirl", blob, "application/zip"))]
+    ).json()
+    assert len(opened["warnings"]) == 2 and opened["settings"]["band_params"] == {}

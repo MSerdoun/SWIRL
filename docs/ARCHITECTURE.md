@@ -9,6 +9,7 @@ swirl.synthetic   end-members with known ground truth, for tests and calibration
 swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
 swirl.features    band parameters (position, depth, width, asymmetry, ratios); later matching, rules
 swirl.drillhole   samples grouped by hole and depth; strip-log arrays (build_log)
+swirl.project     .swirl projects: spectra (exact) + session settings; GUI ↔ notebook bridge
 swirl.cli         command line (`swirl ...`)
 swirl.app         FastAPI backend (in-memory workspace + JSON API) serving the Vue frontend
 frontend/         Vue 3 + Vuetify + Plotly; built into src/swirl/app/static
@@ -54,6 +55,11 @@ package; `swirl app` opens the browser. Point-spectra volumes fit in memory, so 
 The API only translates JSON to library calls; processing and QC always run server-side,
 so the GUI, the CLI and Python give identical results. Spectra on different grids are
 processed in separate groups rather than resampled behind the user's back.
+
+**D10 — Projects are a bridge, not a database.** A `.swirl` file is a zip of readable JSON
+(settings, metadata, history) and float64 arrays; loading never executes anything (no
+pickle). The GUI settings it carries are plain data that Python can turn back into a recipe,
+band and QC parameters, so a session started in the GUI continues in a notebook and back.
 
 ## Naming
 
