@@ -7,8 +7,8 @@ SWIRL aims to be an open, scriptable tool for the workflow exploration geologist
 point spectrometer data (ASD, TerraSpec, SVC…): import, quality control, pre-processing,
 absorption-feature extraction, mineral interpretation, down-hole visualisation and export.
 
-> **Status: pre-alpha (v0.1 in development).** The data model, the delimited-text and ASD
-> readers and a synthetic end-member generator exist. Pre-processing, interpretation and the graphical
+> **Status: pre-alpha (v0.1 in development).** Data model, text and ASD readers, synthetic
+> end-members, pre-processing (recipes) and QC exist. Interpretation and the graphical
 > interface are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Install (development)
@@ -33,8 +33,22 @@ print(s)                 # Spectrum(name='illite_noisy', quantity=reflectance, b
 print(s.history)         # every step that produced this spectrum
 ```
 
+```python
+from swirl.preprocess import apply, load_recipe
+
+s2 = apply("splice_correction", s, reference_segment=1, fit_bands=20)
+s3 = apply("smooth", s2, window=11, polyorder=2)
+cr = apply("continuum_removal", s3, start=1300, stop=2500)
+
+recipe = load_recipe("examples/recipes/swir_basic.toml")   # the same chain as a file
+out = recipe.run(spectra)
+```
+
 ```bash
 swirl info examples/data/synthetic/*.txt     # summarise files
+swirl ops                                    # every operation, parameter, default
+swirl process examples/recipes/swir_basic.toml data/*.asd --outdir processed/
+swirl qc data/*.asd --config examples/recipes/qc.toml
 swirl synth my_synthetic_set/                # regenerate the synthetic sample set
 ```
 

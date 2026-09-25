@@ -1,0 +1,10 @@
+# QC thresholds for `swirl qc FILES --config examples/recipes/qc.toml`.
+# Set a threshold to a very large value (or remove the check in Python with None) to ignore it.
+max_reflectance = 1.05
+min_mean_reflectance = 0.05
+max_nan_fraction = 0.05
+noise_range = [2300.0, 2450.0]
+noise_window = 11
+max_noise = 0.005
+splice_boundaries = [1000.0, 1800.0]
+max_splice_step = 0.01

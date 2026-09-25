@@ -1,4 +1,4 @@
-"""Command-line interface: ``swirl info`` and ``swirl synth``."""
+"""Command-line interface: ``swirl info | ops | process | qc | synth``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,8 @@ from pathlib import Path
 import numpy as np
 
 from swirl._version import __version__
-from swirl.io import read
+from swirl.core.spectrum import SpectralSet, Spectrum
+from swirl.io import read, write
 
 
 def _cmd_info(args: argparse.Namespace) -> int:
@@ -46,6 +47,77 @@ def _cmd_synth(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_ops(args: argparse.Namespace) -> int:
+    from pydantic_core import PydanticUndefined
+
+    from swirl.preprocess import get_operation, operations
+
+    ops = [get_operation(n) for n in args.names] if args.names else operations()
+    for op in ops:
+        print(f"{op.name}: {op.summary}")
+        for fname, f in op.params.model_fields.items():
+            if f.default is not PydanticUndefined:
+                default = repr(f.default)
+            elif f.default_factory is not None:
+                default = repr(f.default_factory())  # type: ignore[call-arg]
+            else:
+                default = "required"
+            kind = str(f.annotation).replace("typing.", "")
+            print(f"    {fname} [{kind}] = {default}\n        {f.description or ''}")
+    return 0
+
+
+def _read_all(files: Sequence[Path], fmt: str | None) -> list[tuple[Path, list[Spectrum]]]:
+    return [(path, read(path, format=fmt)) for path in files]
+
+
+def _cmd_process(args: argparse.Namespace) -> int:
+    from swirl.preprocess import load_recipe
+
+    recipe = load_recipe(args.recipe)
+    inputs = _read_all(args.files, args.format)
+    if args.merge is not None:
+        out = recipe.run(SpectralSet.from_spectra([s for _, spectra in inputs for s in spectra]))
+        args.merge.parent.mkdir(parents=True, exist_ok=True)
+        write(out, args.merge)
+        print(f"{len(out)} spectra -> {args.merge}")
+        return 0
+    if args.outdir is None:
+        print("error: give --outdir or --merge", file=sys.stderr)
+        return 2
+    args.outdir.mkdir(parents=True, exist_ok=True)
+    for path, spectra in inputs:
+        target = args.outdir / f"{path.stem}.csv"
+        write(recipe.run(spectra), target)
+        print(f"{path} -> {target}")
+    return 0
+
+
+def _cmd_qc(args: argparse.Namespace) -> int:
+    import tomllib
+
+    from swirl.preprocess import QCParams, run_qc
+
+    config = tomllib.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
+    params = QCParams.model_validate(config)
+    header = (
+        f"{'spectrum':<28} {'max':>7} {'mean':>7} {'NaN%':>6} {'noise':>8} {'splice':>7}  flags"
+    )
+    print(header)
+    flagged = 0
+    for path, spectra in _read_all(args.files, args.format):
+        del path
+        for r in run_qc(SpectralSet.from_spectra(spectra), params):
+            m = r.metrics
+            flagged += not r.ok
+            print(
+                f"{r.name[:28]:<28} {m['max_reflectance']:>7.3f} {m['mean_reflectance']:>7.3f} "
+                f"{100 * m['nan_fraction']:>6.1f} {m['noise_rms']:>8.5f} "
+                f"{m['max_splice_step']:>7.4f}  {', '.join(r.flags) or 'ok'}"
+            )
+    return 1 if args.strict and flagged else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="swirl", description=__doc__)
     parser.add_argument("--version", action="version", version=f"swirl {__version__}")
@@ -55,6 +127,25 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("files", nargs="+", type=Path)
     info.add_argument("--format", default=None, help="force a format instead of the extension")
     info.set_defaults(func=_cmd_info)
+
+    ops = sub.add_parser("ops", help="list processing operations and their parameters")
+    ops.add_argument("names", nargs="*")
+    ops.set_defaults(func=_cmd_ops)
+
+    process = sub.add_parser("process", help="apply a recipe (TOML or JSON) to files")
+    process.add_argument("recipe", type=Path)
+    process.add_argument("files", nargs="+", type=Path)
+    process.add_argument("--outdir", type=Path, help="write one processed file per input")
+    process.add_argument("--merge", type=Path, help="process all spectra as one set, one file")
+    process.add_argument("--format", default=None, help="force an input format")
+    process.set_defaults(func=_cmd_process)
+
+    qc = sub.add_parser("qc", help="quality-control report")
+    qc.add_argument("files", nargs="+", type=Path)
+    qc.add_argument("--config", type=Path, help="TOML file of QC thresholds")
+    qc.add_argument("--format", default=None, help="force an input format")
+    qc.add_argument("--strict", action="store_true", help="exit with 1 if anything is flagged")
+    qc.set_defaults(func=_cmd_qc)
 
     synth = sub.add_parser("synth", help="write the synthetic end-member sample set")
     synth.add_argument("outdir", type=Path)

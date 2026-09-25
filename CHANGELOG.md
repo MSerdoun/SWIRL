@@ -13,3 +13,7 @@
   stored reflectance, raw DN and white-reference outputs, header metadata (instrument,
   acquisition time, integration time, gains, splice wavelengths, reference description).
 - New quantity `raw` (instrument digital numbers).
+- Pre-processing operations with validated, user-settable parameter models: `crop`,
+  `mask`, `resample`, `splice_correction`, `smooth`, `continuum_removal`.
+- Recipes (TOML / JSON) chaining operations; `swirl process`, `swirl ops`.
+- Quality control with settable thresholds; `swirl qc`.

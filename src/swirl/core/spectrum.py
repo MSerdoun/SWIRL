@@ -242,6 +242,7 @@ class SpectralSet(Sequence[Spectrum]):
         values: ArrayLike,
         wavelength: ArrayLike | None = None,
         quantity: Quantity | None = None,
+        metas: Sequence[Mapping[str, Any]] | None = None,
     ) -> SpectralSet:
         """Return a new set produced by ``step`` applied to every spectrum."""
         return SpectralSet(
@@ -249,9 +250,13 @@ class SpectralSet(Sequence[Spectrum]):
             values,
             self._names,
             quantity=self._quantity if quantity is None else quantity,
-            metas=self._metas,
+            metas=self._metas if metas is None else metas,
             histories=[(*h, step) for h in self._histories],
         )
+
+    @property
+    def metas(self) -> tuple[Mapping[str, Any], ...]:
+        return self._metas
 
     def __repr__(self) -> str:
         return (

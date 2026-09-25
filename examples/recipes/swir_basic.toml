@@ -1,0 +1,24 @@
+# Example recipe: every parameter is written out, so each can be changed.
+# Run it with:  swirl process examples/recipes/swir_basic.toml FILES... --outdir out/
+# List operations and parameters with:  swirl ops
+name = "SWIR basic"
+description = "Splice correction, light smoothing, hull quotient over 1300-2500 nm"
+
+[[steps]]
+op = "splice_correction"
+boundaries = [1000.0, 1800.0]   # or "metadata" to use each ASD file's splice wavelengths
+reference_segment = 1           # 0 = VNIR, 1 = SWIR1, 2 = SWIR2
+method = "multiplicative"       # or "additive"
+fit_bands = 20
+fit_degree = 1
+
+[[steps]]
+op = "smooth"
+method = "savgol"               # or "moving_average"
+window = 11
+polyorder = 2
+
+[[steps]]
+op = "continuum_removal"
+start = 1300.0
+stop = 2500.0

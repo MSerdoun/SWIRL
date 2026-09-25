@@ -14,6 +14,7 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "scipy>=1.11",
+    "pydantic>=2.6",
 ]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
@@ -54,6 +55,7 @@ select = ["E", "F", "W", "I", "B", "UP", "NPY", "RUF"]
 # numpy stubs use 3.12 syntax; the 3.11 CI job still checks runtime compatibility.
 python_version = "3.12"
 strict = true
+plugins = ["pydantic.mypy"]
 files = ["src/swirl"]
 
 [[tool.mypy.overrides]]

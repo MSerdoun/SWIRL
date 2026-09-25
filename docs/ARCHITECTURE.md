@@ -6,7 +6,7 @@
 swirl.core        data model: Spectrum, SpectralSet, ProcessingStep, metadata keys
 swirl.io          file formats behind one registry: read(path) / write(spectra, path)
 swirl.synthetic   end-members with known ground truth, for tests and calibration
-swirl.preprocess  (planned) splice correction, smoothing, resampling, continuum removal, QC
+swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
 swirl.features    (planned) absorption-feature extraction, scalars, library matching, rules
 swirl.cli         command line (`swirl ...`)
 swirl.app         (planned) FastAPI backend serving the Vue frontend — a client of the above
@@ -34,8 +34,14 @@ different grids are rejected; resampling is an explicit, recorded processing ste
 **D5 — Formats are plugins.** A format is a module plus one `register_format` call. Reading
 returns `list[Spectrum]`, because one file can hold several spectra.
 
-**D6 — Parameters as data.** Algorithm parameters will be plain dataclasses / schemas, so the
-GUI generates its forms from them instead of duplicating them (no GUI ↔ backend drift).
+**D6 — Parameters as data, all user-settable.** Every operation declares a pydantic
+parameter model (defaults, bounds, descriptions; unknown fields rejected). The same model
+validates Python calls and recipe files, is recorded verbatim in the history, and will give
+the GUI its forms through `model_json_schema()` — no GUI ↔ backend drift.
+
+**D9 — Recipes.** A processing chain is data: an ordered list of `{op, params}` in TOML or
+JSON, validated entirely before any spectrum is touched. The same recipe runs from Python,
+the CLI (`swirl process`) and the GUI.
 
 **D7 — Validation before trust.** Each algorithm lands with a science spec and a reference
 case (see `docs/science/`), and a test that scores it against that case. Synthetic spectra
