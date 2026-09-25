@@ -20,6 +20,7 @@ from swirl._version import __version__
 from swirl.app.workspace import Entry, Workspace, as_set, group_by_grid
 from swirl.core import meta as mk
 from swirl.core.spectrum import SpectralSet, Spectrum
+from swirl.drillhole import as_sample, build_log, holes
 from swirl.features import BandParams, SpectrumBands, extract_bands, write_band_table
 from swirl.io import formats, read
 from swirl.io.text import write_text
@@ -58,6 +59,7 @@ def array(values: np.ndarray) -> list[float | None]:
 
 def summary(entry: Entry) -> dict[str, Any]:
     s = entry.spectrum
+    sample = as_sample(s)
     return {
         "id": entry.id,
         "name": s.name,
@@ -66,6 +68,9 @@ def summary(entry: Entry) -> dict[str, Any]:
         "n_bands": s.n_bands,
         "wl_min": float(s.wavelength[0]),
         "wl_max": float(s.wavelength[-1]),
+        "hole_id": sample.hole_id if sample else None,
+        "depth_from": sample.depth_from if sample else None,
+        "depth_to": sample.depth_to if sample else None,
     }
 
 
@@ -104,6 +109,14 @@ class BandsIn(BaseModel):
     params: dict[str, Any] = Field(default_factory=dict)
 
 
+class LogIn(BaseModel):
+    hole_id: str
+    steps: list[StepIn] = Field(default_factory=list)
+    band_params: dict[str, Any] = Field(default_factory=dict)
+    qc_params: dict[str, Any] = Field(default_factory=dict)
+    image_max_bands: int = Field(400, ge=10, le=3000)
+
+
 class QCIn(BaseModel):
     ids: list[str]
     params: dict[str, Any] = Field(default_factory=dict)
@@ -139,6 +152,13 @@ def build_router(workspace: Workspace) -> APIRouter:
             return workspace.get(ids)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=f"unknown spectrum id(s): {exc}") from None
+
+    def band_params(raw: Mapping[str, Any]) -> BandParams:
+        try:
+            return BandParams.model_validate(raw)
+        except ValidationError as exc:
+            errors = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+            raise HTTPException(status_code=422, detail={"params": errors}) from None
 
     @router.get("/health")
     def health() -> dict[str, Any]:
@@ -204,6 +224,86 @@ def build_router(workspace: Workspace) -> APIRouter:
             ]
         return {"added": [summary(e) for e in workspace.add(spectra, "synthetic")], "errors": []}
 
+    @router.post("/spectra/examples/hole")
+    def load_example_hole() -> dict[str, Any]:
+        from swirl.synthetic.drillhole import synthetic_drillhole
+
+        spectra = synthetic_drillhole()
+        return {
+            "added": [summary(e) for e in workspace.add(spectra, "synthetic hole")],
+            "errors": [],
+        }
+
+    @router.get("/holes")
+    def list_holes() -> list[dict[str, Any]]:
+        found = holes(e.spectrum for e in workspace.entries())
+        return [
+            {
+                "hole_id": h,
+                "n": len(samples),
+                "top": samples[0].depth_from,
+                "bottom": samples[-1].depth_to,
+            }
+            for h, samples in sorted(found.items())
+        ]
+
+    @router.post("/log")
+    def hole_log(body: LogIn) -> dict[str, Any]:
+        """Strip-log arrays of one hole: recipe output image, band parameters, QC, truth."""
+        recipe = _recipe(body.steps)
+        bparams = band_params(body.band_params)
+        try:
+            qparams = QCParams.model_validate(body.qc_params)
+        except ValidationError as exc:
+            errors = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
+            raise HTTPException(status_code=422, detail={"qc_params": errors}) from None
+        entries = [
+            e
+            for e in workspace.entries()
+            if (smp := as_sample(e.spectrum)) and smp.hole_id == body.hole_id
+        ]
+        if not entries:
+            raise HTTPException(status_code=404, detail=f"no samples for hole {body.hole_id!r}")
+        by_spectrum = {id(e.spectrum): e.id for e in entries}
+        samples = holes(e.spectrum for e in entries)[body.hole_id]
+        try:
+            log = build_log(
+                samples,
+                recipe=recipe,
+                band_params=bparams,
+                qc_params=qparams,
+                image_max_bands=body.image_max_bands,
+            )
+        except (ProcessingError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from None
+        return {
+            "hole_id": log.hole_id,
+            "ids": [by_spectrum[id(smp.spectrum)] for smp in samples],
+            "names": log.names,
+            "depth_from": array(log.depth_from),
+            "depth_to": array(log.depth_to),
+            "quantity": log.quantity.value,
+            "image": {
+                "wavelength": array(log.image_wavelength),
+                "values": [array(row) for row in log.image],
+            },
+            "mean_reflectance": array(log.mean_reflectance),
+            "bands": jsonable(log.bands),
+            "ratios": {k: array(v) for k, v in log.ratios.items()},
+            "qc": [list(r.flags) for r in log.qc] if log.qc is not None else None,
+            "truth": (
+                {
+                    "composition": {k: array(v) for k, v in log.truth_composition.items()},
+                    "aloh_center": array(log.truth_aloh_center)
+                    if log.truth_aloh_center is not None
+                    else None,
+                }
+                if log.truth_composition is not None
+                else None
+            ),
+            "notes": log.notes,
+        }
+
     @router.get("/operations")
     def list_operations() -> list[dict[str, Any]]:
         return [
@@ -254,13 +354,6 @@ def build_router(workspace: Workspace) -> APIRouter:
                 {"op": s.op, "params": s.params.model_dump(mode="json")} for s in recipe.steps
             ],
         }
-
-    def band_params(raw: Mapping[str, Any]) -> BandParams:
-        try:
-            return BandParams.model_validate(raw)
-        except ValidationError as exc:
-            errors = [{"loc": list(e["loc"]), "msg": e["msg"]} for e in exc.errors()]
-            raise HTTPException(status_code=422, detail={"params": errors}) from None
 
     def run_bands(
         body: BandsIn,

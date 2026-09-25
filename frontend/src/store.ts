@@ -8,6 +8,8 @@ import {
   ApiError,
   type BandDefinition,
   type BandRow,
+  type HoleInfo,
+  type HoleLogData,
   type JsonSchema,
   type OperationInfo,
   type QcResult,
@@ -63,6 +65,13 @@ export const state = reactive({
   bandBusy: false,
   showBandMarkers: true,
   showBandWindows: true,
+  mainView: 'spectra' as 'spectra' | 'drillhole',
+  holes: [] as HoleInfo[],
+  selectedHole: null as string | null,
+  log: null as HoleLogData | null,
+  logBusy: false,
+  logErrors: [] as string[],
+  logTracks: [] as string[],
   busy: false,
   notice: { show: false, text: '', color: 'error' },
 })
@@ -136,6 +145,7 @@ export async function init() {
     state.qcParams = defaults(qcSchema)
     state.spectra = spectra
     for (const s of spectra.slice(0, 8)) setVisible(s.id, true)
+    await refreshHoles()
     state.ready = true
   } catch (err) {
     notify(`Cannot reach the SWIRL server: ${message(err)}`)
@@ -154,6 +164,7 @@ function addLoaded(added: SpectrumSummary[], errors: { file: string; message: st
   if (errors.length)
     notify(errors.map((e) => `${e.file}: ${e.message}`).join('\n'))
   else if (added.length) notify(`${added.length} spectrum(s) loaded`, 'success')
+  void refreshHoles()
 }
 
 export async function uploadFiles(files: File[]) {
@@ -194,6 +205,7 @@ export async function removeSpectrum(id: string) {
   delete state.processed[id]
   releaseSlot(id)
   if (state.focused === id) state.focused = null
+  void refreshHoles()
 }
 
 export async function clearWorkspace() {
@@ -209,6 +221,7 @@ export async function clearWorkspace() {
   state.inputs = {}
   state.processed = {}
   state.focused = null
+  void refreshHoles()
 }
 
 // --- recipe ------------------------------------------------------------------------------
@@ -476,3 +489,74 @@ export async function exportBands() {
     notify(message(err))
   }
 }
+
+// --- drill holes -----------------------------------------------------------------------------
+
+export async function refreshHoles() {
+  try {
+    state.holes = await api.holes()
+  } catch (err) {
+    notify(message(err))
+    return
+  }
+  if (!state.holes.some((h) => h.hole_id === state.selectedHole))
+    state.selectedHole = state.holes[0]?.hole_id ?? null
+  if (!state.selectedHole) state.log = null
+}
+
+export async function loadExampleHole() {
+  state.busy = true
+  try {
+    const r = await api.exampleHole()
+    addLoaded(r.added, r.errors)
+    await refreshHoles()
+    state.selectedHole = r.added[0]?.hole_id ?? state.selectedHole
+    state.mainView = 'drillhole'
+  } catch (err) {
+    notify(message(err))
+  } finally {
+    state.busy = false
+  }
+}
+
+let logSeq = 0
+let logTimer: number | undefined
+
+async function runLog() {
+  const seq = ++logSeq
+  if (state.mainView !== 'drillhole' || !state.selectedHole) return
+  if (state.steps.some((s) => s.enabled && Object.keys(s.localErrors).length)) return
+  if (Object.keys(state.bandLocalErrors).length || Object.keys(state.qcLocalErrors).length) return
+  state.logBusy = true
+  try {
+    const log = await api.log({
+      hole_id: state.selectedHole,
+      steps: activeSteps(),
+      band_params: state.bandParams,
+      qc_params: state.qcParams,
+    })
+    if (seq !== logSeq) return
+    state.log = log
+    state.logErrors = log.notes
+  } catch (err) {
+    if (seq !== logSeq) return
+    state.logErrors = [message(err)]
+  } finally {
+    if (seq === logSeq) state.logBusy = false
+  }
+}
+
+watch(
+  () => [
+    state.mainView,
+    state.selectedHole,
+    state.spectra.length,
+    JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
+    JSON.stringify(state.bandParams),
+    JSON.stringify(state.qcParams),
+  ],
+  () => {
+    window.clearTimeout(logTimer)
+    logTimer = window.setTimeout(runLog, 300)
+  },
+)

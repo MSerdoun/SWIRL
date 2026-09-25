@@ -5,6 +5,7 @@ import { useTheme } from 'vuetify'
 
 import BandsPanel from './components/BandsPanel.vue'
 import DetailsPanel from './components/DetailsPanel.vue'
+import DrillholeView from './components/DrillholeView.vue'
 import QcPanel from './components/QcPanel.vue'
 import RecipePanel from './components/RecipePanel.vue'
 import SpectrumPlot from './components/SpectrumPlot.vue'
@@ -51,6 +52,11 @@ onMounted(init)
 
     <v-main class="d-flex flex-column" style="height: 100vh">
       <div class="d-flex align-center px-3 py-1 border-b">
+        <v-btn-toggle v-model="state.mainView" mandatory density="compact" variant="tonal" color="primary" divided class="mr-4">
+          <v-btn value="spectra" size="small">Spectra</v-btn>
+          <v-btn value="drillhole" size="small">Drill hole</v-btn>
+        </v-btn-toggle>
+        <template v-if="state.mainView === 'spectra'">
         <v-btn-toggle v-model="state.viewMode" mandatory density="compact" variant="outlined" divided :disabled="!hasProcessed">
           <v-btn value="input" size="small">Input</v-btn>
           <v-btn value="processed" size="small">Processed</v-btn>
@@ -59,9 +65,14 @@ onMounted(init)
         <span class="text-caption text-muted ml-3">
           {{ hasProcessed ? 'Recipe applied to the shown spectra' : 'No active recipe step — showing input' }}
         </span>
+        </template>
+        <span v-else class="text-caption text-muted">
+          The log shows the recipe output, the band parameters and QC of every sample of the hole.
+        </span>
       </div>
       <div class="flex-grow-1" style="min-height: 0">
-        <SpectrumPlot />
+        <SpectrumPlot v-if="state.mainView === 'spectra'" />
+        <DrillholeView v-else />
       </div>
       <div class="border-t d-flex flex-column" :style="{ height: bottomOpen ? '340px' : '40px', flex: 'none' }">
         <div class="d-flex align-center">

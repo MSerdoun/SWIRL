@@ -319,3 +319,18 @@ def test_recipe_errors_name_the_step():
         Recipe.from_dict({"steps": [{"op": "nope"}]})
     with pytest.raises(ProcessingError, match="non-empty"):
         Recipe.from_dict({"steps": []})
+
+
+def test_qhull_hull_matches_reference_chain(synthetic_dir):
+    """The qhull-based upper hull equals the monotone-chain reference (random + real shapes)."""
+    from swirl.preprocess.continuum import _upper_chain_python
+
+    rng = np.random.default_rng(0)
+    cases = [(np.arange(500.0), rng.random(500)) for _ in range(20)]
+    for m in MINERALS:
+        s = load(synthetic_dir, f"{m}_noisy")
+        cases.append((s.wavelength, s.values))
+    cases.append((np.arange(10.0), np.ones(10)))  # flat: qhull cannot, fallback must
+    for x, y in cases:
+        ref = np.interp(x, x[_upper_chain_python(x, y)], y[_upper_chain_python(x, y)])
+        np.testing.assert_allclose(upper_hull(x, y), ref, rtol=0, atol=1e-12)

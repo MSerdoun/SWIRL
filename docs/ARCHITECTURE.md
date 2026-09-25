@@ -8,6 +8,7 @@ swirl.io          file formats behind one registry: read(path) / write(spectra, 
 swirl.synthetic   end-members with known ground truth, for tests and calibration
 swirl.preprocess  operations (crop, mask, resample, splice, smooth, continuum), recipes, QC
 swirl.features    band parameters (position, depth, width, asymmetry, ratios); later matching, rules
+swirl.drillhole   samples grouped by hole and depth; strip-log arrays (build_log)
 swirl.cli         command line (`swirl ...`)
 swirl.app         FastAPI backend (in-memory workspace + JSON API) serving the Vue frontend
 frontend/         Vue 3 + Vuetify + Plotly; built into src/swirl/app/static

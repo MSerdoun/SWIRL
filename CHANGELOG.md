@@ -28,3 +28,14 @@
   with band-table and ratio editors, results matrix (including the error vs synthetic
   truth), and band markers and search windows on the plot. Accuracy measured on the
   synthetic set in docs/science/band_parameters.md.
+- Synthetic drill hole (`swirl.synthetic.drillhole`, `swirl synth-hole`): 200 samples with a
+  known alteration zonation, a drifting white-mica AlOH centre, dark samples, noise and
+  splice steps; truth kept in each spectrum's metadata.
+- Down-hole organisation (`swirl.drillhole`): samples grouped by `hole_id` and ordered by
+  depth; `build_log` assembles the strip-log arrays (recipe-output image, band parameters,
+  ratios, QC, synthetic truth).
+- GUI "Drill hole" view: strip log with a shared depth axis — truth composition, spectral
+  image, mean reflectance, band position/depth/width tracks (with the generating AlOH
+  centre overlaid), ratios, QC by flag type; click a depth to select the sample.
+- Faster processing: qhull convex hull, Savitzky-Golay on all spectra at once (same
+  results); a 200-sample log builds in under a second.

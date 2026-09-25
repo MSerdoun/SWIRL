@@ -179,17 +179,18 @@ def _gauss(x: FloatArray, c: float, d: float, f: float) -> FloatArray:
 
 
 def _half_width_crossing(x: FloatArray, y: FloatArray, j: int, level: float, step: int) -> float:
-    """Walk from index j (step -1 or +1) until y rises to ``level``; interpolate the crossing."""
-    k = j
-    while 0 <= k + step < len(y):
-        a, b = k, k + step
-        if not (np.isfinite(y[a]) and np.isfinite(y[b])):
-            return math.nan
-        if y[b] >= level:
-            t = (level - y[a]) / (y[b] - y[a]) if y[b] != y[a] else 0.0
-            return float(x[a] + t * (x[b] - x[a]))
-        k = b
-    return math.nan
+    """From index j, go left (step -1) or right (+1) to where y first rises to ``level`` and
+    interpolate the crossing. A gap (NaN) met first, or no crossing, gives NaN."""
+    seg = y[j + 1 :] if step > 0 else y[:j][::-1]
+    hits = np.flatnonzero(~(seg < level))  # reaches the level, or is NaN
+    if hits.size == 0:
+        return math.nan
+    b = j + step * (int(hits[0]) + 1)
+    a = b - step
+    if not (np.isfinite(y[a]) and np.isfinite(y[b])):
+        return math.nan
+    t = (level - y[a]) / (y[b] - y[a]) if y[b] != y[a] else 0.0
+    return float(x[a] + t * (x[b] - x[a]))
 
 
 def _measure(
@@ -199,18 +200,18 @@ def _measure(
     band: BandDefinition,
     p: BandParams,
     continuum: str,
+    d2: FloatArray | None = None,
 ) -> BandMeasure:
-    """Measure one band on the continuum-removed signal ``cr`` defined on ``x``."""
+    """Measure one band on the continuum-removed signal ``cr`` defined on ``x``.
+
+    ``d2`` may carry the precomputed 2nd derivative of ``cr[window]`` (batch path).
+    """
     idx = np.flatnonzero(window & np.isfinite(cr))
     if idx.size < p.min_window_bands:
         return NO_DATA
     w, sub = x[idx], cr[idx]
-    k = min(p.derivative_window, idx.size - (1 - idx.size % 2))
-    d2 = (
-        savgol_filter(sub, k, p.derivative_polyorder, deriv=2)
-        if k > p.derivative_polyorder
-        else np.full(idx.size, math.nan)
-    )
+    if d2 is None or d2.shape != sub.shape:
+        d2 = _second_derivative(sub, p)
     j = int(np.argmin(sub))
     status: Status = "minimum"
     if not 0 < j < idx.size - 1:
@@ -271,9 +272,16 @@ def _ratio(a: float, b: float, p: BandParams) -> float:
     return math.log(num / den) if p.ratio_scale == "log" else num / den
 
 
-def measure_spectrum(
-    wavelength: FloatArray, values: FloatArray, quantity: Quantity, p: BandParams
-) -> tuple[dict[str, BandMeasure], dict[str, float]]:
+def _second_derivative(sub: FloatArray, p: BandParams) -> FloatArray:
+    """Savitzky-Golay 2nd derivative along the last axis (rows of a matrix at once)."""
+    n = sub.shape[-1]
+    k = min(p.derivative_window, n - (1 - n % 2))
+    if k <= p.derivative_polyorder:
+        return np.full(sub.shape, math.nan)
+    return np.asarray(savgol_filter(sub, k, p.derivative_polyorder, deriv=2, axis=-1))
+
+
+def _mode(quantity: Quantity, p: BandParams) -> str:
     if p.continuum == "input" and quantity is not Quantity.CONTINUUM_REMOVED:
         raise ProcessingError(
             "continuum='input' needs continuum-removed spectra: add a continuum_removal step "
@@ -284,44 +292,81 @@ def measure_spectrum(
     ):
         if quantity is Quantity.RAW:
             raise ProcessingError("band parameters need reflectance or continuum-removed input")
-        mode = "local"
-    else:
-        mode = "input"
+        return "local"
+    return "input"
 
-    bands: dict[str, BandMeasure] = {}
+
+def _measure_set(
+    wl: FloatArray, values: FloatArray, quantity: Quantity, p: BandParams
+) -> list[tuple[dict[str, BandMeasure], dict[str, float]]]:
+    """Measure all bands on a matrix of spectra sharing ``wl`` (one row per spectrum).
+
+    The 2nd derivative of every row that is complete over a window is computed in one call;
+    rows with gaps are handled one by one. Results are identical either way.
+    """
+    mode = _mode(quantity, p)
+    n = values.shape[0]
+    per: list[dict[str, BandMeasure]] = [{} for _ in range(n)]
     for band in p.bands:
-        window = (wavelength >= band.lo) & (wavelength <= band.hi)
+        window = (wl >= band.lo) & (wl <= band.hi)
         if mode == "input":
-            bands[band.name] = _measure(wavelength, values, window, band, p, mode)
-            continue
-        idx = np.flatnonzero(window & np.isfinite(values))
-        if idx.size < p.min_window_bands:
-            bands[band.name] = NO_DATA
-            continue
-        x = wavelength[idx]
-        hull = upper_hull(x, values[idx])
-        with np.errstate(divide="ignore", invalid="ignore"):
-            cr = np.where(hull > 0, values[idx] / hull, np.nan)
-        bands[band.name] = _measure(x, cr, np.ones(x.size, bool), band, p, mode)
+            x, cr, mask = wl, values, window
+        else:
+            cols = np.flatnonzero(window)
+            x = wl[cols]
+            cr = np.full((n, cols.size), np.nan)
+            for i in range(n):
+                v = values[i, cols]
+                if np.isfinite(v).sum() < p.min_window_bands:
+                    continue
+                hull = upper_hull(x, v)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    cr[i] = np.where(hull > 0, v / hull, np.nan)
+            mask = np.ones(x.size, bool)
+        block = cr[:, mask]
+        complete = np.all(np.isfinite(block), axis=1)
+        d2_rows: dict[int, FloatArray] = {}
+        if complete.any() and block.shape[1] >= p.min_window_bands:
+            d2 = _second_derivative(block[complete], p)
+            d2_rows = dict(zip(np.flatnonzero(complete).tolist(), d2, strict=True))
+        for i in range(n):
+            per[i][band.name] = _measure(x, cr[i], mask, band, p, mode, d2_rows.get(i))
 
     key = "log" if p.ratio_scale == "log" else "ratio"
-    ratios = {f"{key}({a}/{b})": _ratio(bands[a].depth, bands[b].depth, p) for a, b in p.ratios}
-    return bands, ratios
+    return [
+        (bands, {f"{key}({a}/{b})": _ratio(bands[a].depth, bands[b].depth, p) for a, b in p.ratios})
+        for bands in per
+    ]
+
+
+def measure_spectrum(
+    wavelength: FloatArray, values: FloatArray, quantity: Quantity, p: BandParams
+) -> tuple[dict[str, BandMeasure], dict[str, float]]:
+    """Measure all bands of one spectrum."""
+    return _measure_set(wavelength, values[None, :], quantity, p)[0]
 
 
 def extract_bands(
     data: Spectrum | SpectralSet | Sequence[Spectrum], params: BandParams | None = None
 ) -> list[SpectrumBands]:
-    """Measure every band of ``params`` on every spectrum."""
+    """Measure every band of ``params`` on every spectrum (input order kept)."""
     p = params or BandParams()
-    if isinstance(data, Spectrum):
-        data = [data]
+    spectra: list[Spectrum] = [data] if isinstance(data, Spectrum) else list(data)
     step = ProcessingStep("band_parameters", p.model_dump(mode="json"))
-    out = []
-    for s in data:
-        bands, ratios = measure_spectrum(s.wavelength, s.values, s.quantity, p)
-        out.append(SpectrumBands(s.name, bands, ratios, dict(s.meta), (*s.history, step)))
-    return out
+    out: list[SpectrumBands | None] = [None] * len(spectra)
+    # Group spectra sharing a grid and quantity so each group is measured as one matrix.
+    groups: dict[tuple[bytes, str], list[int]] = {}
+    for i, s in enumerate(spectra):
+        groups.setdefault((s.wavelength.tobytes(), s.quantity.value), []).append(i)
+    for members in groups.values():
+        first = spectra[members[0]]
+        matrix = np.vstack([spectra[i].values for i in members])
+        for i, (bands, ratios) in zip(
+            members, _measure_set(first.wavelength, matrix, first.quantity, p), strict=True
+        ):
+            s = spectra[i]
+            out[i] = SpectrumBands(s.name, bands, ratios, dict(s.meta), (*s.history, step))
+    return [r for r in out if r is not None]
 
 
 MEASURES = ("position", "shift", "depth", "width", "asymmetry", "curvature", "status")

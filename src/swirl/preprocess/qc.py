@@ -76,19 +76,34 @@ def _noise(wl: FloatArray, v: FloatArray, p: QCParams) -> float:
     return float(np.sqrt(np.mean(resid**2)))
 
 
+def _noise_all(wl: FloatArray, values: FloatArray, p: QCParams) -> FloatArray:
+    """Noise of every spectrum; rows complete over the range are filtered in one call."""
+    sel = (wl >= p.noise_range[0]) & (wl <= p.noise_range[1])
+    out = np.full(values.shape[0], np.nan)
+    block = values[:, sel]
+    complete = np.all(np.isfinite(block), axis=1)
+    if complete.any() and block.shape[1] >= p.noise_window:
+        resid = block[complete] - savgol_filter(block[complete], p.noise_window, 2, axis=1)
+        out[complete] = np.sqrt(np.mean(resid**2, axis=1))
+    for i in np.flatnonzero(~complete):
+        out[i] = _noise(wl, values[i], p)
+    return out
+
+
 def run_qc(sset: SpectralSet, params: QCParams | None = None) -> list[QCResult]:
     p = params or QCParams()
     if sset.quantity is not Quantity.REFLECTANCE:
         raise ProcessingError(f"QC expects reflectance, got {sset.quantity.value}")
     wl = sset.wavelength
+    noise = _noise_all(wl, sset.values, p)
     results = []
-    for v, meta, name in zip(sset.values, sset.metas, sset.names, strict=True):
+    for i, (v, meta, name) in enumerate(zip(sset.values, sset.metas, sset.names, strict=True)):
         finite = v[np.isfinite(v)]
         m: dict[str, float] = {
             "max_reflectance": float(finite.max()) if finite.size else float("nan"),
             "mean_reflectance": float(finite.mean()) if finite.size else float("nan"),
             "nan_fraction": 1.0 - finite.size / v.size,
-            "noise_rms": _noise(wl, v, p),
+            "noise_rms": float(noise[i]),
         }
         try:
             bounds = resolve_boundaries(p.splice_boundaries, meta, name)

@@ -136,6 +136,21 @@ def _cmd_bands(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_synth_hole(args: argparse.Namespace) -> int:
+    import tomllib
+
+    from swirl.synthetic.drillhole import DrillholeConfig, synthetic_drillhole
+
+    config = tomllib.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
+    if args.seed is not None:
+        config["seed"] = args.seed
+    cfg = DrillholeConfig.model_validate(config)
+    spectra = synthetic_drillhole(cfg)
+    write(spectra, args.out)
+    print(f"{cfg.hole_id}: {len(spectra)} samples {cfg.top:g}-{cfg.bottom:g} m -> {args.out}")
+    return 0
+
+
 def _cmd_app(args: argparse.Namespace) -> int:
     try:
         from swirl.app import launch
@@ -182,6 +197,12 @@ def build_parser() -> argparse.ArgumentParser:
     bands.add_argument("--config", type=Path, help="TOML of band parameters (bands, method...)")
     bands.add_argument("--format", default=None, help="force an input format")
     bands.set_defaults(func=_cmd_bands)
+
+    hole = sub.add_parser("synth-hole", help="write a synthetic drill hole with known zonation")
+    hole.add_argument("out", type=Path, help="output file (SWIRL text / CSV)")
+    hole.add_argument("--config", type=Path, help="TOML overriding the drill-hole settings")
+    hole.add_argument("--seed", type=int, default=None)
+    hole.set_defaults(func=_cmd_synth_hole)
 
     app = sub.add_parser("app", help="start the graphical interface in the browser")
     app.add_argument("--host", default="127.0.0.1")

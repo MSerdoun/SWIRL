@@ -8,6 +8,9 @@ export interface SpectrumSummary {
   n_bands: number
   wl_min: number
   wl_max: number
+  hole_id: string | null
+  depth_from: number | null
+  depth_to: number | null
 }
 
 export interface HistoryStep {
@@ -111,6 +114,29 @@ export interface BandDefinition {
   hi: number
 }
 
+export interface HoleInfo {
+  hole_id: string
+  n: number
+  top: number
+  bottom: number
+}
+
+export interface HoleLogData {
+  hole_id: string
+  ids: string[]
+  names: string[]
+  depth_from: (number | null)[]
+  depth_to: (number | null)[]
+  quantity: string
+  image: { wavelength: (number | null)[]; values: (number | null)[][] }
+  mean_reflectance: (number | null)[]
+  bands: Record<string, { position: (number | null)[]; depth: (number | null)[]; width: (number | null)[]; asymmetry: (number | null)[]; status: string[] }>
+  ratios: Record<string, (number | null)[]>
+  qc: string[][] | null
+  truth: { composition: Record<string, (number | null)[]>; aloh_center: (number | null)[] | null } | null
+  notes: string[]
+}
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -156,6 +182,15 @@ export const api = {
     return request<Added>('POST', '/api/spectra/upload', form)
   },
   examples: () => request<Added>('POST', '/api/spectra/examples'),
+  exampleHole: () => request<Added>('POST', '/api/spectra/examples/hole'),
+  holes: () => request<HoleInfo[]>('GET', '/api/holes'),
+  log: (body: {
+    hole_id: string
+    steps: StepPayload[]
+    band_params: Record<string, unknown>
+    qc_params: Record<string, unknown>
+    image_max_bands?: number
+  }) => request<HoleLogData>('POST', '/api/log', body),
   remove: (id: string) => request<unknown>('DELETE', `/api/spectra/${id}`),
   clear: () => request<unknown>('DELETE', '/api/spectra'),
   operations: () => request<OperationInfo[]>('GET', '/api/operations'),

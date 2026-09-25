@@ -4,7 +4,7 @@ import { computed, ref } from 'vue'
 import { useTheme } from 'vuetify'
 
 import { seriesColor } from '../palette'
-import { clearWorkspace, loadExamples, removeSpectrum, setAllVisible, setVisible, state, uploadFiles, visibleIds } from '../store'
+import { clearWorkspace, loadExampleHole, loadExamples, removeSpectrum, setAllVisible, setVisible, state, uploadFiles, visibleIds } from '../store'
 
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
@@ -45,7 +45,21 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
         <v-btn :prepend-icon="mdiUpload" variant="tonal" color="primary" class="flex-grow-1" :loading="state.busy" @click="fileInput?.click()">
           Open files
         </v-btn>
-        <v-btn :icon="mdiFlaskOutline" variant="tonal" title="Load the synthetic examples" @click="loadExamples" />
+        <v-menu location="bottom end">
+          <template #activator="{ props: menu }">
+            <v-btn v-bind="menu" :icon="mdiFlaskOutline" variant="tonal" title="Load synthetic data" />
+          </template>
+          <v-list density="compact">
+            <v-list-item @click="loadExamples">
+              <v-list-item-title>Synthetic end-members</v-list-item-title>
+              <v-list-item-subtitle>8 spectra: 4 minerals, clean and noisy</v-list-item-subtitle>
+            </v-list-item>
+            <v-list-item @click="loadExampleHole">
+              <v-list-item-title>Synthetic drill hole</v-list-item-title>
+              <v-list-item-subtitle>200 samples, known alteration zonation</v-list-item-subtitle>
+            </v-list-item>
+          </v-list>
+        </v-menu>
       </div>
       <input ref="fileInput" type="file" multiple accept=".asd,.txt,.csv,.tsv,.dat,.sco" hidden @change="onFiles" />
       <div class="text-caption text-muted mt-1">.asd .txt .csv .tsv .dat .sco — or drop files here</div>
@@ -79,7 +93,8 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
             <span class="text-truncate">{{ s.name }}</span>
           </v-list-item-title>
           <v-list-item-subtitle class="mono">
-            {{ s.quantity }} · {{ s.wl_min }}–{{ s.wl_max }} nm · {{ s.n_bands }} b
+            <template v-if="s.hole_id">{{ s.hole_id }} · {{ s.depth_from }}–{{ s.depth_to }} m</template>
+            <template v-else>{{ s.quantity }} · {{ s.wl_min }}–{{ s.wl_max }} nm · {{ s.n_bands }} b</template>
           </v-list-item-subtitle>
           <template #append>
             <v-btn :icon="mdiDeleteOutline" size="x-small" title="Remove" @click.stop="removeSpectrum(s.id)" />

@@ -6,9 +6,45 @@ from typing import Self
 
 import numpy as np
 from pydantic import Field, model_validator
+from scipy.spatial import ConvexHull, QhullError
 
 from swirl.core.spectrum import FloatArray, ProcessingStep, Quantity, SpectralSet
 from swirl.preprocess.registry import Params, ProcessingError, operation
+
+
+def _upper_chain_python(x: FloatArray, y: FloatArray) -> list[int]:
+    """Monotone-chain upper hull (reference implementation, O(n) with a Python loop)."""
+    hull: list[int] = []
+    for i in range(x.size):
+        while len(hull) >= 2:
+            o, a = hull[-2], hull[-1]
+            cross = (x[a] - x[o]) * (y[i] - y[o]) - (y[a] - y[o]) * (x[i] - x[o])
+            if cross >= 0:  # a lies on or below the chord o-i: not a hull vertex
+                hull.pop()
+            else:
+                break
+        hull.append(i)
+    return hull
+
+
+def _upper_chain(x: FloatArray, y: FloatArray) -> np.ndarray:
+    """Indices (increasing) of the upper-hull vertices of strictly increasing x."""
+    n = x.size
+    if n <= 2:
+        return np.arange(n)
+    span_y = float(y.max() - y.min())
+    if span_y == 0:
+        return np.array([0, n - 1])
+    # Normalise both axes: qhull is sensitive to very different scales (nm vs reflectance).
+    pts = np.column_stack([(x - x[0]) / (x[-1] - x[0]), (y - y.min()) / span_y])
+    try:
+        v = ConvexHull(pts).vertices  # counter-clockwise
+    except QhullError:  # e.g. all points collinear
+        return np.array(_upper_chain_python(x, y))
+    # Counter-clockwise from the rightmost point runs over the top to the leftmost one.
+    order = np.roll(v, -int(np.flatnonzero(v == n - 1)[0]))
+    stop = int(np.flatnonzero(order == 0)[0])
+    return np.sort(order[: stop + 1])
 
 
 def upper_hull(x: FloatArray, y: FloatArray) -> FloatArray:
@@ -20,18 +56,10 @@ def upper_hull(x: FloatArray, y: FloatArray) -> FloatArray:
     out = np.full(x.shape, np.nan)
     if finite.size < 2:
         return out
-    hull: list[int] = []
-    for i in finite:
-        while len(hull) >= 2:
-            o, a = hull[-2], hull[-1]
-            cross = (x[a] - x[o]) * (y[i] - y[o]) - (y[a] - y[o]) * (x[i] - x[o])
-            if cross >= 0:  # a lies on or below the chord o-i: not a hull vertex
-                hull.pop()
-            else:
-                break
-        hull.append(int(i))
+    xf, yf = x[finite], y[finite]
+    hull = _upper_chain(xf, yf)
     lo, hi = finite[0], finite[-1]
-    out[lo : hi + 1] = np.interp(x[lo : hi + 1], x[hull], y[hull])
+    out[lo : hi + 1] = np.interp(x[lo : hi + 1], xf[hull], yf[hull])
     out[~np.isfinite(y)] = np.nan
     return out
 

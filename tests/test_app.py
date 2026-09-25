@@ -135,3 +135,21 @@ def test_bands_endpoint_with_truth(client):
     assert csv.status_code == 200 and "AlOH_position" in csv.text
     schema = client.get("/api/bands/schema").json()
     assert schema["properties"]["bands"]["default"][5]["name"] == "AlOH"
+
+
+def test_synthetic_hole_and_log(client):
+    added = client.post("/api/spectra/examples/hole").json()["added"]
+    assert len(added) == 200 and added[0]["hole_id"] == "SYN-DH01"
+    assert added[0]["depth_from"] == 0 and added[-1]["depth_to"] == 200
+    holes = client.get("/api/holes").json()
+    assert holes == [{"hole_id": "SYN-DH01", "n": 200, "top": 0.0, "bottom": 200.0}]
+    steps = [{"op": "continuum_removal", "params": {"start": 1300, "stop": 2500}}]
+    log = client.post(
+        "/api/log", json={"hole_id": "SYN-DH01", "steps": steps, "image_max_bands": 100}
+    ).json()
+    assert len(log["ids"]) == 200 and log["quantity"] == "continuum_removed"
+    assert len(log["image"]["values"]) == 200 and len(log["image"]["wavelength"]) <= 100
+    assert set(log["truth"]["composition"]) == {"white_mica", "illite", "chlorite", "hematite"}
+    assert len(log["bands"]["AlOH"]["position"]) == 200
+    assert sum("low_albedo" in f for f in log["qc"]) == 3
+    assert client.post("/api/log", json={"hole_id": "nope"}).status_code == 404

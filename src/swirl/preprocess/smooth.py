@@ -54,5 +54,16 @@ def smooth(sset: SpectralSet, p: SmoothParams, step: ProcessingStep) -> Spectral
     spacing = np.diff(sset.wavelength)
     if not np.allclose(spacing, spacing[0], rtol=1e-6):
         raise ProcessingError("smoothing needs a regular wavelength grid; resample first")
-    values = np.vstack([smooth_values(v, p) for v in sset.values])
+    values = sset.values.copy()
+    complete = np.all(np.isfinite(values), axis=1)
+    # Rows without gaps are filtered together (same result, one call); others run by run.
+    if complete.any() and values.shape[1] >= p.window:
+        if p.method == "savgol":
+            values[complete] = savgol_filter(
+                values[complete], p.window, p.polyorder, mode="interp", axis=1
+            )
+        else:
+            values[complete] = uniform_filter1d(values[complete], p.window, mode="nearest", axis=1)
+    for i in np.flatnonzero(~complete):
+        values[i] = smooth_values(sset.values[i], p)
     return sset.derive(step, values=values)
