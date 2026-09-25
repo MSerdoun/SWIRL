@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { mdiDeleteOutline, mdiDeleteSweepOutline, mdiFlaskOutline, mdiMapMarkerPath, mdiUpload } from '@mdi/js'
+import { mdiDeleteSweepOutline, mdiFlaskOutline, mdiMapMarkerPath, mdiUpload } from '@mdi/js'
 import { computed, ref } from 'vue'
 import { useTheme } from 'vuetify'
 
 import { seriesColor } from '../palette'
+import SpectrumRow from './SpectrumRow.vue'
 import { clearWorkspace, loadExampleHole, loadExampleNamed, loadExamples, removeSpectrum, setAllVisible, setVisible, state, uploadFiles, visibleIds } from '../store'
 
 const theme = useTheme()
@@ -76,38 +77,25 @@ const allOn = computed(() => state.spectra.length > 0 && visibleIds.value.length
       <v-btn :icon="mdiDeleteSweepOutline" size="small" title="Remove all spectra" @click="clearWorkspace" />
     </div>
 
-    <div class="flex-grow-1 overflow-y-auto">
+    <div class="flex-grow-1 d-flex flex-column" style="min-height: 0">
       <div v-if="!state.spectra.length" class="text-body-2 text-muted px-4 py-6">
         No spectra yet. Open ASD or text files, drop them here, or load the synthetic examples
         (flask button).
       </div>
-      <v-list density="compact" class="py-0" bg-color="transparent">
-        <v-list-item
-          v-for="s in shown"
-          :key="s.id"
-          :active="state.focused === s.id"
-          color="primary"
-          class="px-3"
-          @click="state.focused = s.id"
-        >
-          <template #prepend>
-            <v-checkbox-btn :model-value="!!state.visible[s.id]" @click.stop @update:model-value="(v: boolean | null) => setVisible(s.id, !!v)" />
-          </template>
-          <v-list-item-title class="d-flex align-center ga-2">
-            <span v-if="state.visible[s.id]" class="swatch" :style="{ background: seriesColor(state.slots[s.id], dark) }" />
-            <span class="text-truncate">{{ s.name }}</span>
-          </v-list-item-title>
-          <v-list-item-subtitle class="mono">
-            <template v-if="s.hole_id">
-              {{ s.hole_id }} · {{ s.depth_to != null && s.depth_to !== s.depth_from ? `${s.depth_from}–${s.depth_to}` : s.depth_from }} m
-            </template>
-            <template v-else>{{ s.quantity }} · {{ s.wl_min }}–{{ s.wl_max }} nm · {{ s.n_bands }} b</template>
-          </v-list-item-subtitle>
-          <template #append>
-            <v-btn :icon="mdiDeleteOutline" size="x-small" title="Remove" @click.stop="removeSpectrum(s.id)" />
-          </template>
-        </v-list-item>
-      </v-list>
+      <!-- Only the rows on screen exist in the page, however many spectra are loaded. -->
+      <v-virtual-scroll v-else :items="shown" :item-height="52" height="100%" class="flex-grow-1">
+        <template #default="{ item: s }">
+          <SpectrumRow
+            :s="s"
+            :visible="!!state.visible[s.id]"
+            :color="state.visible[s.id] ? seriesColor(state.slots[s.id], dark) : null"
+            :focused="state.focused === s.id"
+            @toggle="(on: boolean) => setVisible(s.id, on)"
+            @focus="state.focused = s.id"
+            @remove="removeSpectrum(s.id)"
+          />
+        </template>
+      </v-virtual-scroll>
     </div>
     <div v-if="state.spectra.length" class="px-4 py-2 text-caption text-muted border-t">
       {{ visibleIds.length }} shown / {{ state.spectra.length }} loaded

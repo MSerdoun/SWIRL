@@ -63,6 +63,12 @@ processed in separate groups rather than resampled behind the user's back.
 pickle). The GUI settings it carries are plain data that Python can turn back into a recipe,
 band and QC parameters, so a session started in the GUI continues in a notebook and back.
 
+**D11 — Measure, then keep the GUI light.** Large arrays travel as float32 (base64) with
+each wavelength axis sent once, and stay outside Vue's reactivity; the server caches
+recipe outputs, band parameters and QC by (spectra identity, parameters); a panel's data
+is computed only while it is shown; long lists are virtualised. Performance claims are
+measured before and after (see the changelog), never assumed.
+
 ## Naming
 
 The PyPI name `swirl` is taken, so the distribution is `swirl-spectra`; the import name is

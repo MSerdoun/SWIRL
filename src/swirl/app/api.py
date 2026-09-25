@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import io
 import json
 import math
 import tempfile
+import threading
 import tomllib
-from collections.abc import Mapping, Sequence
+from collections import OrderedDict
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict
+from functools import partial
 from pathlib import Path, PurePath
 from typing import Any, Literal
 
@@ -36,6 +40,7 @@ from swirl.naming import Inference, NamingExample, apply_rules, infer_rules
 from swirl.preprocess import (
     ProcessingError,
     QCParams,
+    QCResult,
     Recipe,
     RecipeStep,
     get_operation,
@@ -73,7 +78,44 @@ def jsonable(obj: Any) -> Any:
 
 
 def array(values: np.ndarray) -> list[float | None]:
+    """Small arrays as JSON lists (NaN -> null)."""
     return [float(v) if math.isfinite(v) else None for v in values.tolist()]
+
+
+def packed(values: np.ndarray) -> dict[str, Any]:
+    """Large arrays as little-endian float32, base64 (4 bytes a value instead of ~20 as
+    JSON text; NaN stays NaN). The browser decodes them into Float32Arrays."""
+    a = np.ascontiguousarray(values, dtype="<f4")
+    return {"f32": base64.b64encode(a.tobytes()).decode("ascii"), "shape": list(a.shape)}
+
+
+class LRU:
+    """A small thread-safe least-recently-used cache for computed results."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self._data: OrderedDict[Any, tuple[Any, Any]] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key: Any, compute: Callable[[], tuple[Any, Any]]) -> Any:
+        """The cached value for ``key``, else ``compute()`` → (objects kept alive, value)."""
+        with self._lock:
+            if key in self._data:
+                self._data.move_to_end(key)
+                return self._data[key][1]
+        keep, value = compute()
+        with self._lock:
+            self._data[key] = (keep, value)
+            self._data.move_to_end(key)
+            while len(self._data) > self.size:
+                self._data.popitem(last=False)
+        return value
+
+
+def spectra_key(entries: Sequence[Entry]) -> tuple[int, ...]:
+    # Spectra are immutable and replaced (never modified) when their metadata change, so the
+    # identity of the objects is a safe cache key while the cache keeps them alive.
+    return tuple(id(e.spectrum) for e in entries)
 
 
 def summary(entry: Entry) -> dict[str, Any]:
@@ -94,12 +136,29 @@ def summary(entry: Entry) -> dict[str, Any]:
     }
 
 
-def detail(entry: Entry) -> dict[str, Any]:
+class Grids:
+    """Wavelength axes sent once per response: spectra refer to them by key."""
+
+    def __init__(self) -> None:
+        self._keys: dict[bytes, str] = {}
+        self.packed: dict[str, dict[str, Any]] = {}
+
+    def key(self, wavelength: np.ndarray) -> str:
+        raw = np.ascontiguousarray(wavelength, dtype=np.float64).tobytes()
+        if raw not in self._keys:
+            k = f"g{len(self._keys)}"
+            self._keys[raw] = k
+            self.packed[k] = packed(wavelength)
+        return self._keys[raw]
+
+
+def detail(entry: Entry, grids: Grids | None = None) -> dict[str, Any]:
+    """A spectrum with its arrays. With ``grids``, the wavelength is a key into them."""
     s = entry.spectrum
     return {
         **summary(entry),
-        "wavelength": array(s.wavelength),
-        "values": array(s.values),
+        **({"grid": grids.key(s.wavelength)} if grids else {"wavelength": packed(s.wavelength)}),
+        "values": packed(s.values),
         "meta": jsonable(dict(s.meta)),
         "history": [jsonable(h.to_dict()) for h in s.history],
     }
@@ -116,6 +175,11 @@ class StepIn(BaseModel):
 class ProcessIn(BaseModel):
     ids: list[str]
     steps: list[StepIn] = Field(default_factory=list)
+    with_inputs: list[str] = Field(default_factory=list)
+
+
+class IdsIn(BaseModel):
+    ids: list[str]
 
 
 class RecipeTextIn(BaseModel):
@@ -182,9 +246,48 @@ def _recipe(steps: Sequence[StepIn]) -> Recipe:
     return Recipe(steps=tuple(built))
 
 
+_PROCESSED = LRU(48)
+_BANDS = LRU(48)
+_QC = LRU(48)
+
+
+def _bands_for(
+    group: Sequence[Entry], recipe: Recipe, params: BandParams
+) -> tuple[SpectralSet, list[SpectrumBands]]:
+    """Recipe output and band parameters of these spectra, both cached."""
+    out = _run(recipe, group)
+    key = (spectra_key(group), _recipe_key(recipe), params.model_dump_json())
+    return out, _BANDS.get(key, partial(_compute_bands, out, params))
+
+
+def _compute_bands(out: SpectralSet, params: BandParams) -> tuple[SpectralSet, list[SpectrumBands]]:
+    return out, extract_bands(out, params)
+
+
+def _qc_for(group: Sequence[Entry], params: QCParams) -> list[QCResult]:
+    key = (spectra_key(group), params.model_dump_json())
+    return _QC.get(key, partial(_compute_qc, group, params))  # type: ignore[no-any-return]
+
+
+def _compute_qc(
+    group: Sequence[Entry], params: QCParams
+) -> tuple[tuple[Spectrum, ...], list[QCResult]]:
+    return tuple(e.spectrum for e in group), run_qc(as_set(group), params)
+
+
+def _recipe_key(recipe: Recipe) -> str:
+    return json.dumps(recipe.to_dict(), sort_keys=True)
+
+
 def _run(recipe: Recipe, group: Sequence[Entry]) -> SpectralSet:
-    sset = as_set(group)
-    return recipe.run(sset) if recipe.steps else sset
+    """The recipe output for these spectra, cached (same spectra + same recipe = reuse)."""
+
+    def compute() -> tuple[tuple[Spectrum, ...], SpectralSet]:
+        sset = as_set(group)
+        # The spectra are kept with the result so their ids stay valid cache keys.
+        return tuple(e.spectrum for e in group), (recipe.run(sset) if recipe.steps else sset)
+
+    return _PROCESSED.get((spectra_key(group), _recipe_key(recipe)), compute)  # type: ignore[no-any-return]
 
 
 def build_router(workspace: Workspace) -> APIRouter:
@@ -309,13 +412,24 @@ def build_router(workspace: Workspace) -> APIRouter:
             raise HTTPException(status_code=404, detail=f"no samples for hole {body.hole_id!r}")
         by_spectrum = {id(e.spectrum): e.id for e in entries}
         samples = holes(e.spectrum for e in entries)[body.hole_id]
+        position = {id(smp.spectrum): i for i, smp in enumerate(samples)}
+        ordered = sorted(entries, key=lambda e: position[id(e.spectrum)])
         try:
+            processed, band_results = _bands_for(ordered, recipe, bparams)
+            qc_results = (
+                _qc_for(ordered, qparams)
+                if ordered[0].spectrum.quantity.value == "reflectance"
+                else None
+            )
             log = build_log(
                 samples,
                 recipe=recipe,
                 band_params=bparams,
                 qc_params=qparams,
                 image_max_bands=body.image_max_bands,
+                processed=processed,
+                band_results=band_results,
+                qc_results=qc_results,
             )
         except (ProcessingError, ValueError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from None
@@ -326,10 +440,7 @@ def build_router(workspace: Workspace) -> APIRouter:
             "depth_from": array(log.depth_from),
             "depth_to": array(log.depth_to),
             "quantity": log.quantity.value,
-            "image": {
-                "wavelength": array(log.image_wavelength),
-                "values": [array(row) for row in log.image],
-            },
+            "image": {"wavelength": packed(log.image_wavelength), "values": packed(log.image)},
             "mean_reflectance": array(log.mean_reflectance),
             "bands": jsonable(log.bands),
             "ratios": {k: array(v) for k, v in log.ratios.items()},
@@ -591,6 +702,7 @@ def build_router(workspace: Workspace) -> APIRouter:
     @router.post("/process")
     def process(body: ProcessIn) -> dict[str, Any]:
         recipe = _recipe(body.steps)
+        grids = Grids()
         results: list[dict[str, Any]] = []
         errors: list[dict[str, Any]] = []
         for group in group_by_grid(lookup(body.ids)):
@@ -599,19 +711,28 @@ def build_router(workspace: Workspace) -> APIRouter:
             except ProcessingError as exc:
                 errors.append({"ids": [e.id for e in group], "message": str(exc)})
                 continue
+            grid = grids.key(out.wavelength)
             for entry, s in zip(group, out, strict=True):
                 results.append(
                     {
                         "id": entry.id,
                         "name": s.name,
                         "quantity": s.quantity.value,
-                        "wavelength": array(s.wavelength),
-                        "values": array(s.values),
+                        "grid": grid,
+                        "values": packed(s.values),
                         "history": [jsonable(h.to_dict()) for h in s.history],
                         "meta": jsonable(dict(s.meta)),
                     }
                 )
-        return {"results": results, "errors": errors}
+        inputs = [detail(e, grids) for e in lookup(body.with_inputs)] if body.with_inputs else []
+        return {"results": results, "errors": errors, "inputs": inputs, "grids": grids.packed}
+
+    @router.post("/spectra/data")
+    def spectra_data(body: IdsIn) -> dict[str, Any]:
+        """Several spectra with their arrays in one request (wavelength axes sent once)."""
+        grids = Grids()
+        spectra = [detail(e, grids) for e in lookup(body.ids)]
+        return {"spectra": spectra, "grids": grids.packed}
 
     @router.post("/recipe/parse")
     def parse_recipe(body: RecipeTextIn) -> dict[str, Any]:
@@ -640,8 +761,7 @@ def build_router(workspace: Workspace) -> APIRouter:
         errors: list[dict[str, Any]] = []
         for group in group_by_grid(lookup(body.ids)):
             try:
-                out = _run(recipe, group)
-                results = extract_bands(out, params)
+                out, results = _bands_for(group, recipe, params)
             except ProcessingError as exc:
                 errors.append({"ids": [e.id for e in group], "message": str(exc)})
                 continue
@@ -711,7 +831,7 @@ def build_router(workspace: Workspace) -> APIRouter:
         errors_out: list[dict[str, Any]] = []
         for group in group_by_grid(lookup(body.ids)):
             try:
-                qc_results = run_qc(as_set(group), params)
+                qc_results = _qc_for(group, params)
             except ProcessingError as exc:
                 errors_out.append({"ids": [e.id for e in group], "message": str(exc)})
                 continue

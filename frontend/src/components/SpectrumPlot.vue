@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import Plotly from 'plotly.js-dist-min'
+import Plotly from 'plotly.js-cartesian-dist-min'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 
@@ -17,17 +17,17 @@ const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
 let observer: ResizeObserver | undefined
 
-function interp(xs: (number | null)[], ys: (number | null)[], x: number): number | null {
+function interp(xs: ArrayLike<number>, ys: ArrayLike<number>, x: number): number | null {
   let lo = 0
   let hi = xs.length - 1
-  if (xs[lo] == null || xs[hi] == null || x < (xs[lo] as number) || x > (xs[hi] as number)) return null
+  if (hi < 1 || x < xs[lo] || x > xs[hi]) return null
   while (hi - lo > 1) {
     const mid = (lo + hi) >> 1
-    if ((xs[mid] as number) <= x) lo = mid
+    if (xs[mid] <= x) lo = mid
     else hi = mid
   }
-  const [x0, x1, y0, y1] = [xs[lo], xs[hi], ys[lo], ys[hi]] as number[]
-  if (y0 == null || y1 == null) return null
+  const [x0, x1, y0, y1] = [xs[lo], xs[hi], ys[lo], ys[hi]]
+  if (!Number.isFinite(y0) || !Number.isFinite(y1)) return null
   return x1 === x0 ? y0 : y0 + ((x - x0) / (x1 - x0)) * (y1 - y0)
 }
 
@@ -193,7 +193,12 @@ async function render() {
   })
 }
 
-watch(figure, render)
+// Draw once per interaction: wait for the computations in flight (processing, and band
+// parameters when their markers are shown) instead of redrawing at every partial answer.
+const settling = computed(() => state.processing || (state.showBandMarkers && state.bandBusy))
+watch([figure, settling], () => {
+  if (!settling.value) void render()
+})
 onMounted(() => {
   void render()
   observer = new ResizeObserver(() => el.value && Plotly.Plots.resize(el.value))

@@ -55,10 +55,11 @@ function errorFor(name: string): string[] {
     <div v-for="f in fields" :key="f.name">
       <v-select
         v-if="f.widget.kind === 'enum'"
-        v-model="params[f.name]"
+        :model-value="params[f.name] as string"
         :items="f.widget.options as string[]"
         :label="label(f.name)"
         :error-messages="errorFor(f.name)"
+        @update:model-value="(v: string) => (params[f.name] = v)"
       >
         <template #append-inner>
           <v-tooltip v-if="f.prop.description" location="start" max-width="320">

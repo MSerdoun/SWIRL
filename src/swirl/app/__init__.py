@@ -10,6 +10,7 @@ import webbrowser
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -29,6 +30,8 @@ _NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>SWIRL</title>
 
 def create_app(workspace: Workspace | None = None, static_dir: Path | None = STATIC_DIR) -> FastAPI:
     app = FastAPI(title="SWIRL", version=__version__)
+    # The frontend bundle and the JSON responses compress several-fold.
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
     app.include_router(build_router(workspace or Workspace()))
     if static_dir is not None and (static_dir / "index.html").exists():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")

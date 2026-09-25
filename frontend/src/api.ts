@@ -24,10 +24,46 @@ export interface SpectrumData {
   id: string
   name: string
   quantity: string
-  wavelength: (number | null)[]
-  values: (number | null)[]
+  wavelength: Float32Array
+  values: Float32Array
   meta: Record<string, unknown>
   history: HistoryStep[]
+}
+
+/** Large arrays arrive as little-endian float32 in base64 (NaN kept). */
+interface Packed {
+  f32: string
+  shape: number[]
+}
+
+export function unpack(p: Packed): Float32Array {
+  const bin = atob(p.f32)
+  const bytes = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  return new Float32Array(bytes.buffer)
+}
+
+function unpackRows(p: Packed): Float32Array[] {
+  const flat = unpack(p)
+  const [rows, cols] = p.shape.length === 2 ? p.shape : [1, flat.length]
+  return Array.from({ length: rows }, (_, r) => flat.subarray(r * cols, (r + 1) * cols))
+}
+
+type Wire<T> = Omit<T, 'wavelength' | 'values'> & { wavelength: Packed; values: Packed }
+
+function decode<T extends { wavelength: Float32Array; values: Float32Array }>(raw: Wire<T>): T {
+  return { ...raw, wavelength: unpack(raw.wavelength), values: unpack(raw.values) } as T
+}
+
+/** Responses listing many spectra send each wavelength axis once, in ``grids``. */
+type GridWire<T> = Omit<T, 'wavelength' | 'values'> & { grid: string; values: Packed }
+
+function decodeWithGrids<T extends { wavelength: Float32Array; values: Float32Array }>(
+  items: GridWire<T>[],
+  grids: Record<string, Packed>,
+): T[] {
+  const axes = Object.fromEntries(Object.entries(grids).map(([k, p]) => [k, unpack(p)]))
+  return items.map((raw) => ({ ...raw, wavelength: axes[raw.grid], values: unpack(raw.values) }) as unknown as T)
 }
 
 export type SpectrumDetail = SpectrumSummary & SpectrumData
@@ -129,7 +165,7 @@ export interface HoleLogData {
   depth_from: (number | null)[]
   depth_to: (number | null)[]
   quantity: string
-  image: { wavelength: (number | null)[]; values: (number | null)[][] }
+  image: { wavelength: Float32Array; values: Float32Array[] }
   mean_reflectance: (number | null)[]
   bands: Record<string, { position: (number | null)[]; depth: (number | null)[]; width: (number | null)[]; asymmetry: (number | null)[]; status: string[] }>
   ratios: Record<string, (number | null)[]>
@@ -239,7 +275,15 @@ async function requestBlob(url: string, body: unknown): Promise<Blob> {
 export const api = {
   health: () => request<{ status: string; version: string }>('GET', '/api/health'),
   spectra: () => request<SpectrumSummary[]>('GET', '/api/spectra'),
-  spectrum: (id: string) => request<SpectrumDetail>('GET', `/api/spectra/${id}`),
+  spectrum: async (id: string) => decode<SpectrumDetail>(await request<Wire<SpectrumDetail>>('GET', `/api/spectra/${id}`)),
+  async spectraData(ids: string[]) {
+    const r = await request<{ spectra: GridWire<SpectrumDetail>[]; grids: Record<string, Packed> }>(
+      'POST',
+      '/api/spectra/data',
+      { ids },
+    )
+    return decodeWithGrids<SpectrumDetail>(r.spectra, r.grids)
+  },
   upload(files: File[]) {
     const form = new FormData()
     for (const f of files) form.append('files', f, f.name)
@@ -275,21 +319,36 @@ export const api = {
   clearHoles: (ids: string[] | null) =>
     request<{ spectra: SpectrumSummary[] }>('POST', '/api/holes/clear', { ids }),
   holes: () => request<HoleInfo[]>('GET', '/api/holes'),
-  log: (body: {
+  log: async (body: {
     hole_id: string
     steps: StepPayload[]
     band_params: Record<string, unknown>
     qc_params: Record<string, unknown>
     image_max_bands?: number
-  }) => request<HoleLogData>('POST', '/api/log', body),
+  }) => {
+    const raw = await request<Omit<HoleLogData, 'image'> & { image: { wavelength: Packed; values: Packed } }>(
+      'POST',
+      '/api/log',
+      body,
+    )
+    return { ...raw, image: { wavelength: unpack(raw.image.wavelength), values: unpackRows(raw.image.values) } } as HoleLogData
+  },
   remove: (id: string) => request<unknown>('DELETE', `/api/spectra/${id}`),
   clear: () => request<unknown>('DELETE', '/api/spectra'),
   operations: () => request<OperationInfo[]>('GET', '/api/operations'),
-  process: (ids: string[], steps: StepPayload[]) =>
-    request<{ results: SpectrumData[]; errors: GroupError[] }>('POST', '/api/process', {
-      ids,
-      steps,
-    }),
+  async process(ids: string[], steps: StepPayload[], withInputs: string[] = []) {
+    const r = await request<{
+      results: GridWire<SpectrumData>[]
+      errors: GroupError[]
+      inputs: GridWire<SpectrumDetail>[]
+      grids: Record<string, Packed>
+    }>('POST', '/api/process', { ids, steps, with_inputs: withInputs })
+    return {
+      results: decodeWithGrids<SpectrumData>(r.results, r.grids),
+      errors: r.errors,
+      inputs: decodeWithGrids<SpectrumDetail>(r.inputs, r.grids),
+    }
+  },
   exportCsv: (ids: string[], steps: StepPayload[]) =>
     request<string>('POST', '/api/export', { ids, steps }),
   parseRecipe: (text: string, filename: string) =>

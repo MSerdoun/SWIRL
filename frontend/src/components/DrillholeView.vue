@@ -2,7 +2,7 @@
 // Strip log of one hole: every track shares the depth axis. Everything shown is computed
 // server-side (recipe output, band parameters, QC); this component only draws it.
 import { mdiChartBellCurve } from '@mdi/js'
-import Plotly from 'plotly.js-dist-min'
+import Plotly from 'plotly.js-cartesian-dist-min'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useTheme } from 'vuetify'
 
@@ -140,9 +140,12 @@ const figure = computed(() => {
     const base = { xaxis: xref, yaxis: 'y', customdata: custom }
 
     if (track.key === 'image') {
-      const vals = log.image.values.flat().filter((v): v is number => v != null).sort((a, b) => a - b)
-      const zmin = vals.length ? vals[Math.floor(0.02 * (vals.length - 1))] : 0
-      const zmax = log.quantity === 'continuum_removed' ? 1 : vals.length ? vals[Math.floor(0.99 * (vals.length - 1))] : 1
+      const all = new Float32Array(log.image.values.reduce((n, r) => n + r.length, 0))
+      let n = 0
+      for (const row of log.image.values) for (const v of row) if (Number.isFinite(v)) all[n++] = v
+      const vals = all.subarray(0, n).sort()
+      const zmin = n ? vals[Math.floor(0.02 * (n - 1))] : 0
+      const zmax = log.quantity === 'continuum_removed' ? 1 : n ? vals[Math.floor(0.99 * (n - 1))] : 1
       traces.push({
         ...base,
         type: 'heatmap',
@@ -159,7 +162,7 @@ const figure = computed(() => {
           [1, dark.value ? '#e8f1fc' : '#f4f8fd'],
         ],
         showscale: false,
-        customdata: ids.map((id) => log.image.wavelength.map(() => id)),
+        customdata: ids.map((id) => new Array(log.image.wavelength.length).fill(id)),
         hovertemplate: '%{y:.1f} m · %{x:.0f} nm: %{z:.3f}<extra></extra>',
       })
       ;(layout[axisName] as Record<string, unknown>).title = {

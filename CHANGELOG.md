@@ -54,6 +54,15 @@
   examples — or join a CSV/TSV sample table (delimiter, decimal comma and columns
   detected). Applied as recorded metadata changes, reversible; files untouched.
   `swirl synth-names` writes synthetic files whose hole and depth are only in their names.
+- Performance (audit measured before/after on a saturated machine): Plotly cartesian
+  bundle + gzip (page JS 5,060 kB → 644 kB transferred, load 12.6 s → 6 s); large arrays
+  sent as float32 base64 with one wavelength axis per response (a click: 569 kB → 81 kB;
+  hole log 1.5 MB → 0.59 MB); server LRU cache of recipe outputs, band parameters and QC
+  (repeated log 2.9 s → 0.35 s; a QC-only change no longer reruns the recipe); plotted data
+  kept out of Vue reactivity; QC and band parameters computed only while their tab is
+  shown; one request and one redraw per click; spectra list as light rows in a virtual
+  scroll (a focus click 0.7–1.9 s → 0.16–0.4 s of UI work with 122 spectra). Frontend now
+  type-checked (vue-tsc) in CI.
 - GUI: Plotly's Chart Studio / "share" buttons removed — plotted data never leaves the
   machine.
 - Faster processing: qhull convex hull, Savitzky-Golay on all spectra at once (same

@@ -23,8 +23,6 @@ import { init, newProject, openProject, recipeRemovesContinuum, saveProject, sta
 
 const theme = useTheme()
 const dark = computed(() => theme.current.value.dark)
-const tab = ref('qc')
-const bottomOpen = ref(true)
 const projectInput = ref<HTMLInputElement | null>(null)
 
 async function onProjectFile(e: Event) {
@@ -143,19 +141,19 @@ onMounted(init)
         <SpectrumPlot v-if="state.mainView === 'spectra'" />
         <DrillholeView v-else />
       </div>
-      <div class="border-t d-flex flex-column" :style="{ height: bottomOpen ? '340px' : '40px', flex: 'none' }">
+      <div class="border-t d-flex flex-column" :style="{ height: state.bottomOpen ? '340px' : '40px', flex: 'none' }">
         <div class="d-flex align-center">
-          <v-tabs v-model="tab" density="compact" color="primary" @update:model-value="bottomOpen = true">
+          <v-tabs v-model="state.bottomTab" density="compact" color="primary" @update:model-value="state.bottomOpen = true">
             <v-tab value="qc">Quality control</v-tab>
             <v-tab value="bands">Band parameters</v-tab>
             <v-tab value="details">Details &amp; history</v-tab>
           </v-tabs>
           <v-spacer />
-          <v-btn :icon="bottomOpen ? mdiChevronDown : mdiChevronUp" size="small" @click="bottomOpen = !bottomOpen" />
+          <v-btn :icon="state.bottomOpen ? mdiChevronDown : mdiChevronUp" size="small" @click="state.bottomOpen = !state.bottomOpen" />
         </div>
-        <div v-show="bottomOpen" class="flex-grow-1" style="min-height: 0">
-          <QcPanel v-if="tab === 'qc'" />
-          <BandsPanel v-else-if="tab === 'bands'" />
+        <div v-show="state.bottomOpen" class="flex-grow-1" style="min-height: 0">
+          <QcPanel v-if="state.bottomTab === 'qc'" />
+          <BandsPanel v-else-if="state.bottomTab === 'bands'" />
           <DetailsPanel v-else />
         </div>
       </div>

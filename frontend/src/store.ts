@@ -1,7 +1,7 @@
 // Application state. Everything computed (processing, QC) comes back from the API; this
 // module only keeps what the user chose and what the server returned.
 
-import { computed, reactive, watch } from 'vue'
+import { computed, markRaw, reactive, watch } from 'vue'
 
 import {
   api,
@@ -64,7 +64,11 @@ export const state = reactive({
   bandRows: [] as BandRow[],
   bandErrors: [] as string[],
   bandBusy: false,
-  showBandMarkers: true,
+  // Band markers need band parameters for every shown spectrum: off unless asked for.
+  showBandMarkers: false,
+  // Bottom panel: QC and band parameters are computed only while their tab is shown.
+  bottomTab: 'qc' as 'qc' | 'bands' | 'details',
+  bottomOpen: true,
   showBandWindows: true,
   mainView: 'spectra' as 'spectra' | 'drillhole',
   // Quick continuum removal applied after the recipe (a real, recorded step).
@@ -113,23 +117,18 @@ function releaseSlot(id: string) {
 
 export function setVisible(id: string, on: boolean) {
   state.visible[id] = on
-  if (on) {
-    assignSlot(id)
-    void ensureInput(id)
-  } else releaseSlot(id)
+  if (on) assignSlot(id)
+  else releaseSlot(id)
 }
 
 export function setAllVisible(on: boolean) {
   for (const s of state.spectra) setVisible(s.id, on)
 }
 
-async function ensureInput(id: string) {
-  if (state.inputs[id]) return
-  try {
-    state.inputs[id] = await api.spectrum(id)
-  } catch (err) {
-    notify(message(err))
-  }
+/** Store server data outside Vue's reactivity: the arrays are only drawn, never edited,
+ * and wrapping them in proxies makes every read (Plotly's included) slow. */
+function keepInput(d: SpectrumDetail) {
+  state.inputs[d.id] = markRaw(d)
 }
 
 // --- workspace ---------------------------------------------------------------------------
@@ -326,24 +325,38 @@ let processTimer: number | undefined
 
 async function runProcess() {
   const seq = ++processSeq
+  if (state.mainView !== 'spectra') {
+    state.processing = false
+    return
+  }
   const ids = visibleIds.value
+  const missing = ids.filter((id) => !state.inputs[id])
   const enabled = state.steps.filter((s) => s.enabled)
   const steps = activeSteps()
   for (const s of state.steps) s.serverErrors = {}
-  if (!ids.length || !steps.length) {
+  const blocked = enabled.some((s) => Object.keys(s.localErrors).length)
+  if (!ids.length || !steps.length || blocked) {
     state.processed = {}
-    state.processErrors = []
-    return
-  }
-  if (enabled.some((s) => Object.keys(s.localErrors).length)) {
-    state.processErrors = ['Fix the highlighted parameters to update the result.']
+    state.processErrors = blocked ? ['Fix the highlighted parameters to update the result.'] : []
+    try {
+      if (missing.length) {
+        const data = await api.spectraData(missing)
+        if (seq === processSeq) data.forEach(keepInput)
+      }
+    } catch (err) {
+      notify(message(err))
+    } finally {
+      if (seq === processSeq) state.processing = false
+    }
     return
   }
   state.processing = true
   try {
-    const r = await api.process(ids, steps)
+    // One request: the processed spectra plus the inputs not loaded yet.
+    const r = await api.process(ids, steps, missing)
     if (seq !== processSeq) return
-    state.processed = Object.fromEntries(r.results.map((x) => [x.id, x]))
+    r.inputs.forEach(keepInput)
+    state.processed = Object.fromEntries(r.results.map((x) => [x.id, markRaw(x)]))
     state.processErrors = r.errors.map((e) => {
       const names = e.ids.map((id) => state.spectra.find((s) => s.id === id)?.name ?? id)
       return `${names.join(', ')}: ${e.message}`
@@ -374,11 +387,15 @@ function isStepDetail(d: unknown): d is { steps: StepProblem[] } {
 
 export function scheduleProcess() {
   window.clearTimeout(processTimer)
+  // Counts as processing from now: the plot waits for the answer instead of redrawing the
+  // stale state during the debounce.
+  if (state.mainView === 'spectra') state.processing = true
   processTimer = window.setTimeout(runProcess, 250)
 }
 
 watch(
   () => [
+    state.mainView,
     visibleIds.value.join(','),
     JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
     continuumKey(),
@@ -391,8 +408,11 @@ watch(
 let qcSeq = 0
 let qcTimer: number | undefined
 
+const qcShown = () => state.bottomOpen && state.bottomTab === 'qc'
+
 async function runQc() {
   const seq = ++qcSeq
+  if (!qcShown()) return
   const ids = visibleIds.value
   state.qcServerErrors = {}
   if (!ids.length) {
@@ -416,7 +436,7 @@ async function runQc() {
 }
 
 watch(
-  () => [visibleIds.value.join(','), JSON.stringify(state.qcParams), JSON.stringify(state.qcLocalErrors)],
+  () => [qcShown(), visibleIds.value.join(','), JSON.stringify(state.qcParams), JSON.stringify(state.qcLocalErrors)],
   () => {
     window.clearTimeout(qcTimer)
     qcTimer = window.setTimeout(runQc, 300)
@@ -454,8 +474,12 @@ export const bandDefinitions = computed(
 let bandSeq = 0
 let bandTimer: number | undefined
 
+const bandsNeeded = () =>
+  (state.bottomOpen && state.bottomTab === 'bands') || (state.showBandMarkers && state.mainView === 'spectra')
+
 async function runBands() {
   const seq = ++bandSeq
+  if (!bandsNeeded()) return
   const ids = visibleIds.value
   state.bandServerErrors = {}
   if (!ids.length || !bandDefinitions.value.length) {
@@ -469,7 +493,7 @@ async function runBands() {
   try {
     const r = await api.bands(ids, activeSteps(), state.bandParams)
     if (seq !== bandSeq) return
-    state.bandRows = r.rows
+    state.bandRows = r.rows.map((row) => markRaw(row))
     state.bandErrors = r.errors.map((e) => e.message)
   } catch (err) {
     if (seq !== bandSeq) return
@@ -487,6 +511,7 @@ async function runBands() {
 
 watch(
   () => [
+    bandsNeeded(),
     visibleIds.value.join(','),
     JSON.stringify(state.steps.map((s) => [s.op, s.enabled, s.params, s.localErrors])),
     JSON.stringify(state.bandParams),
@@ -587,7 +612,7 @@ async function runLog() {
       qc_params: state.qcParams,
     })
     if (seq !== logSeq) return
-    state.log = log
+    state.log = markRaw(log)
     state.logErrors = log.notes
   } catch (err) {
     if (seq !== logSeq) return
@@ -702,7 +727,7 @@ function applyProject(p: OpenedProject) {
   state.mainView = ui.main_view === 'drillhole' ? 'drillhole' : 'spectra'
   state.viewMode = ui.view_mode ?? 'both'
   state.logTracks = ui.log_tracks ?? []
-  state.showBandMarkers = ui.show_band_markers ?? true
+  state.showBandMarkers = ui.show_band_markers ?? false
   state.showBandWindows = ui.show_band_windows ?? true
   state.project = { name: p.name, created: p.created || null, dirty: false }
   return ui.selected_hole as string | null | undefined
@@ -780,7 +805,8 @@ export async function spectraUpdated(spectra: SpectrumSummary[], text: string) {
   )
   state.spectra = spectra
   for (const id of changed) delete state.inputs[id]
-  for (const id of changed) if (state.visible[id]) void api.spectrum(id).then((d) => (state.inputs[id] = d))
+  const refetch = [...changed].filter((id) => state.visible[id])
+  if (refetch.length) void api.spectraData(refetch).then((data) => data.forEach(keepInput))
   await refreshHoles()
   notify(text, 'success')
 }

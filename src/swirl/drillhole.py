@@ -17,7 +17,7 @@ import numpy as np
 
 from swirl.core import meta as mk
 from swirl.core.spectrum import FloatArray, ProcessingStep, Quantity, SpectralSet, Spectrum
-from swirl.features import BandParams, extract_bands
+from swirl.features import BandParams, SpectrumBands, extract_bands
 from swirl.preprocess import QCParams, QCResult, Recipe, run_qc
 
 
@@ -117,16 +117,24 @@ def build_log(
     band_params: BandParams | None = None,
     qc_params: QCParams | None = None,
     image_max_bands: int = 400,
+    processed: SpectralSet | None = None,
+    band_results: Sequence[SpectrumBands] | None = None,
+    qc_results: Sequence[QCResult] | None = None,
 ) -> HoleLog:
-    """Run the recipe on the hole's spectra and assemble the log arrays."""
+    """Run the recipe on the hole's spectra and assemble the log arrays.
+
+    ``processed``, ``band_results`` and ``qc_results`` may be given when already computed
+    for these samples with the same recipe and parameters (the app caches them).
+    """
     if not samples:
         raise ValueError("no samples")
     hole_id = samples[0].hole_id
     spectra = [s.spectrum for s in samples]
     inputs = SpectralSet.from_spectra(spectra)
-    processed = recipe.run(inputs) if recipe is not None and recipe.steps else inputs
+    if processed is None:
+        processed = recipe.run(inputs) if recipe is not None and recipe.steps else inputs
     bp = band_params or BandParams()
-    results = extract_bands(processed, bp)
+    results = list(band_results) if band_results is not None else extract_bands(processed, bp)
 
     bands: dict[str, dict[str, list[Any]]] = {}
     for b in bp.bands:
@@ -144,7 +152,7 @@ def build_log(
     notes = []
     qc: list[QCResult] | None = None
     if inputs.quantity is Quantity.REFLECTANCE:
-        qc = run_qc(inputs, qc_params)
+        qc = list(qc_results) if qc_results is not None else run_qc(inputs, qc_params)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             mean_r = np.nanmean(inputs.values, axis=1)

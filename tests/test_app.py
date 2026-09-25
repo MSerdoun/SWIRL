@@ -12,6 +12,13 @@ def client():
     return TestClient(create_app(Workspace(), static_dir=None))
 
 
+def unpack(p):
+    """Decode a packed float32 array sent by the API."""
+    import base64
+
+    return np.frombuffer(base64.b64decode(p["f32"]), dtype="<f4").reshape(p["shape"])
+
+
 def load_examples(client):
     r = client.post("/api/spectra/examples")
     assert r.status_code == 200
@@ -27,7 +34,8 @@ def test_examples_and_detail(client):
     ids = load_examples(client)
     assert len(ids) == 8
     d = client.get(f"/api/spectra/{ids['illite_noisy']}").json()
-    assert d["n_bands"] == 2151 and len(d["values"]) == 2151
+    assert d["n_bands"] == 2151 and unpack(d["values"]).shape == (2151,)
+    assert unpack(d["wavelength"])[0] == 350.0
     assert d["meta"]["source_path"] == "illite_noisy.txt"
     assert [h["name"] for h in d["history"]][-1] == "read_text"
 
@@ -148,7 +156,10 @@ def test_synthetic_hole_and_log(client):
         "/api/log", json={"hole_id": "SYN-DH01", "steps": steps, "image_max_bands": 100}
     ).json()
     assert len(log["ids"]) == 200 and log["quantity"] == "continuum_removed"
-    assert len(log["image"]["values"]) == 200 and len(log["image"]["wavelength"]) <= 100
+    image = unpack(log["image"]["values"])
+    assert (
+        image.shape[0] == 200 and image.shape[1] == unpack(log["image"]["wavelength"]).size <= 100
+    )
     assert set(log["truth"]["composition"]) == {"white_mica", "illite", "chlorite", "hematite"}
     assert len(log["bands"]["AlOH"]["position"]) == 200
     assert sum("low_albedo" in f for f in log["qc"]) == 3
@@ -264,3 +275,38 @@ def test_sample_table_flow(client):
     )
     bad = client.post("/api/holes/table", files=[("file", ("x.csv", b"only header\n", "text/csv"))])
     assert bad.status_code == 422
+
+
+def test_packed_arrays_keep_nan_and_values(client):
+    ids = load_examples(client)
+    steps = [{"op": "mask", "params": {"ranges": [[1350, 1450]]}}]
+    body = client.post(
+        "/api/process",
+        json={"ids": [ids["illite"]], "steps": steps, "with_inputs": [ids["illite"]]},
+    ).json()
+    out = body["results"][0]
+    values, wl = unpack(out["values"]), unpack(body["grids"][out["grid"]])
+    assert len(body["grids"]) == 1  # one axis for the result and the input
+    assert np.isnan(values[(wl >= 1350) & (wl <= 1450)]).all()
+    assert np.isfinite(values[wl < 1350]).all()
+    assert body["inputs"][0]["id"] == ids["illite"]
+    ref = client.get(f"/api/spectra/{ids['illite']}").json()
+    np.testing.assert_allclose(unpack(body["inputs"][0]["values"]), unpack(ref["values"]))
+    many = client.post("/api/spectra/data", json={"ids": [ids["illite"], ids["chlorite"]]}).json()
+    assert [s["name"] for s in many["spectra"]] == ["illite", "chlorite"]
+
+
+def test_repeated_requests_hit_the_cache(client):
+    import time
+
+    client.post("/api/spectra/examples/hole")
+    steps = [{"op": "continuum_removal", "params": {"start": 1300, "stop": 2500}}]
+    body = {"hole_id": "SYN-DH01", "steps": steps}
+    t0 = time.perf_counter()
+    first = client.post("/api/log", json=body).json()
+    t1 = time.perf_counter()
+    # Only a QC threshold changes: recipe and band parameters come from the cache.
+    second = client.post("/api/log", json={**body, "qc_params": {"max_splice_step": 0.5}}).json()
+    t2 = time.perf_counter()
+    assert (t2 - t1) < 0.5 * (t1 - t0)
+    assert first["bands"] == second["bands"] and first["qc"] != second["qc"]
