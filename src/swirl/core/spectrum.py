@@ -31,6 +31,8 @@ class Quantity(enum.StrEnum):
     """Reflectance as a fraction (0-1)."""
     CONTINUUM_REMOVED = "continuum_removed"
     """Reflectance divided by its continuum (hull quotient)."""
+    RAW = "raw"
+    """Instrument digital numbers, before any conversion to reflectance."""
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ Each lot lands (tests green, committed) before the next one starts.
 | Lot | Weeks | Content | Status |
 |---|---|---|---|
 | L1 Foundations | 1 | Repo, CI, data model, provenance, synthetic end-members | **done** |
-| L2 Readers | 1–2 | Delimited text (done in L1); first binary format (`.asd` or `.sco`, to choose); reader plugin pattern | text done |
+| L2 Readers | 1–2 | Delimited text (L1), ASD binary v1–8; `.sco` read as text | **done** — ASD awaiting real-file validation |
 | L3 Pre-processing | 2–3 | Splice correction, smoothing, resampling, continuum removal, QC flags, CLI | — |
 | L4 Interpretation | 4–6 | Absorption features (position, depth, width, asymmetry), configurable scalars, USGS library matching, mineral rules | — |
 | L5 GUI skeleton | 4–5 | FastAPI + Vue, import, spectrum viewer | — |

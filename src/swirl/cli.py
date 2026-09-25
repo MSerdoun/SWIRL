@@ -33,7 +33,7 @@ def _cmd_info(args: argparse.Namespace) -> int:
                 f"{s.wavelength[0]:g}-{s.wavelength[-1]:g} nm, step {step}, values {vrange}"
             )
             for step_ in s.history:
-                if step_.name not in ("read_text", "synthesize"):
+                if not step_.name.startswith("read_") and step_.name != "synthesize":
                     print(f"    applied: {step_.name} {dict(step_.params)}")
     return status
 

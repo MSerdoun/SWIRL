@@ -7,8 +7,8 @@ SWIRL aims to be an open, scriptable tool for the workflow exploration geologist
 point spectrometer data (ASD, TerraSpec, SVC…): import, quality control, pre-processing,
 absorption-feature extraction, mineral interpretation, down-hole visualisation and export.
 
-> **Status: pre-alpha (v0.1 in development).** The data model, the delimited-text reader and
-> a synthetic end-member generator exist. Pre-processing, interpretation and the graphical
+> **Status: pre-alpha (v0.1 in development).** The data model, the delimited-text and ASD
+> readers and a synthetic end-member generator exist. Pre-processing, interpretation and the graphical
 > interface are next — see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Install (development)
@@ -43,8 +43,9 @@ swirl synth my_synthetic_set/                # regenerate the synthetic sample s
 | Format | Read | Write | Notes |
 |---|---|---|---|
 | Delimited text (`.txt`, `.csv`, `.tsv`, `.dat`) | ✓ | ✓ | tab / `;` / `,` / whitespace, decimal point or comma, µm or nm, fraction or percent — every conversion is recorded in the spectrum history |
-| ASD binary (`.asd`) | planned | — | |
-| `.sco`, `.sed`, `.sig` | planned | — | |
+| ASD binary (`.asd`, file versions 1–8) | ✓ | — | reflectance = target DN / white-reference DN (or the stored reflectance), raw DN or the white reference on request; header metadata kept. **Not yet validated on real instrument files.** |
+| `.sco` | ✓ (text reader) | — | read as delimited text |
+| `.sed`, `.sig` | planned | — | |
 
 ## Principles
 

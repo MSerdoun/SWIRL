@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from swirl.core.spectrum import SpectralSet, Spectrum
+from swirl.io.asd import ASDFormatError, read_asd
 from swirl.io.text import TextFormatError, read_text, write_text
 
 Reader = Callable[..., list[Spectrum]]
@@ -85,18 +86,28 @@ def write(
 register_format(
     Format(
         name="text",
-        extensions=(".txt", ".csv", ".tsv", ".dat"),
+        extensions=(".txt", ".csv", ".tsv", ".dat", ".sco"),
         reader=read_text,
         writer=write_text,
         description="Delimited text: one wavelength column, one column per spectrum",
     )
 )
+register_format(
+    Format(
+        name="asd",
+        extensions=(".asd",),
+        reader=read_asd,
+        description="ASD binary (FieldSpec, TerraSpec, LabSpec, HandHeld), file versions 1-8",
+    )
+)
 
 __all__ = [
+    "ASDFormatError",
     "Format",
     "TextFormatError",
     "formats",
     "read",
+    "read_asd",
     "read_text",
     "register_format",
     "write",

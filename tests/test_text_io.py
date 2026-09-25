@@ -170,3 +170,9 @@ def test_trailing_delimiter_on_every_row(tmp_path):
     (s,) = read_text(p)
     assert s.name == "a"
     np.testing.assert_allclose(s.values, [0.1, 0.2])
+
+
+def test_sco_extension_uses_text_reader(tmp_path):
+    p = tmp_path / "scan.sco"
+    p.write_text("Wavelength\tsample\n350\t0.1\n351\t0.2\n")
+    assert swirl.read(p)[0].name == "sample"
